@@ -5,6 +5,18 @@ updates:
   schedule:
     interval: weekly
   open-pull-requests-limit: 10
+  ignore:
+    # json 3.x moved JSON.parse's options from a positional hash to keyword
+    # arguments, while activesupport 8.1.3.1 still calls
+    # `::JSON.parse(json, options)`. On json 3.x EVERY JSON request body fails to
+    # parse with "wrong number of arguments", so POST /api/v1/checks answers 400
+    # malformed_json for every request, and httparty's parsed_response raises too.
+    #
+    # Dependabot cannot read the comment on the pin in the Gemfile, and it opened
+    # exactly this upgrade once already. Patch releases within 2.x are still
+    # proposed; the breaking major is not. Remove this once Rails supports json 3.
+    - dependency-name: "json"
+      update-types: [ "version-update:semver-major" ]
 - package-ecosystem: github-actions
   directory: "/"
   schedule:

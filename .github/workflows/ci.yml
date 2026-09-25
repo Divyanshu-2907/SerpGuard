@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   scan_ruby:
@@ -20,10 +20,10 @@ jobs:
 
       - name: Scan for common Rails security vulnerabilities using static analysis
         run: bin/brakeman --no-pager
-      
+
       - name: Scan for known security vulnerabilities in gems used
         run: bin/bundler-audit
-      
+
   lint:
     runs-on: ubuntu-latest
     env:
@@ -50,3 +50,35 @@ jobs:
       - name: Lint code for consistent style
         run: bin/rubocop -f github
 
+  test:
+    runs-on: ubuntu-latest
+
+    # The suite talks to a real MongoDB on purpose: the cache behaviour it covers
+    # - a unique index, a hash lookup, a second request served from a stored row -
+    # is exactly what a stubbed datastore would fail to prove. Everything else is
+    # stubbed; WebMock blocks all outbound HTTP, so no API key is needed here.
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Run the spec suite
+        env:
+          RAILS_ENV: test
+          MONGODB_URI_TEST: mongodb://127.0.0.1:27017/serpguard_test
+        run: bundle exec rspec

@@ -1,5 +1,7 @@
 # SerpGuard
 
+[![CI](https://github.com/Divyanshu-2907/SerpGuard/actions/workflows/ci.yml/badge.svg)](https://github.com/Divyanshu-2907/SerpGuard/actions/workflows/ci.yml)
+
 **Fact-checks AI-generated text and code against live search results.**
 
 Built for the SerpApi India Hackathon 2026 — AI Agents track.
