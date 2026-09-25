@@ -46,7 +46,16 @@ services:
       - key: SERPGUARD_API_KEYS
         sync: false
 
-      # Only needed if you start reading Rails encrypted credentials; nothing
-      # does today. Left here because production has no config/master.key.
-      - key: RAILS_MASTER_KEY
-        sync: false
+      # Required, and not optional as it might look. Rails resolves
+      # secret_key_base from the encrypted credentials, which need
+      # config/master.key - a file that is gitignored and so does not exist on
+      # the build host. Without one of these, anything that touches
+      # secret_key_base raises ArgumentError: Missing `secret_key_base` for
+      # 'production'.
+      #
+      # Render generates this on the first deploy, so nothing has to be pasted
+      # in, and the master key never leaves the machine that made it. That key
+      # would decrypt every credential forever; this value is scoped to signing
+      # and can be rotated by deleting it here.
+      - key: SECRET_KEY_BASE
+        generateValue: true
