@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SerpGuard — fact-check AI output against live search</title>
+<meta name="description" content="A Rails 8 API that extracts factual and technical claims from AI-generated text or code and checks each one against live SerpApi search results. Live demo.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg:#F4F5F7; --surface:#FFF; --surface-2:#EBECF1; --line:#DBDCE4; --line-soft:#E7E8EE;
+    --text:#191A21; --text-mid:#4B4C58; --muted:#6F707E;
+    --accent:#0C6F79; --accent-2:#0A555D; --accent-bg:#E1F0F1;
+    --ok:#1F6B4C; --ok-bg:#E2F0EA;
+    --warn:#8A5B0A; --warn-bg:#F7EDDA;
+    --crit:#A32436; --crit-bg:#F8E7EA;
+    --shadow:0 1px 2px rgba(20,20,32,.05), 0 6px 20px rgba(20,20,32,.05);
+    --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#121218; --surface:#1A1A22; --surface-2:#22222C; --line:#31313E; --line-soft:#282832;
+      --text:#ECECF2; --text-mid:#B8B7C5; --muted:#8F8E9F;
+      --accent:#45B6C1; --accent-2:#6FCFD8; --accent-bg:#13333A;
+      --ok:#62C598; --ok-bg:#153229;
+      --warn:#E0AE55; --warn-bg:#352915;
+      --crit:#F0808F; --crit-bg:#391A21;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 6px 22px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:0 20px 80px; background:var(--bg); color:var(--text);
+    font-family:var(--sans); font-size:16px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:860px; margin:0 auto; }
+
+  header { padding:44px 0 28px; }
+  .brandrow { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+  h1 { font-size:1.75rem; font-weight:700; letter-spacing:-.02em; margin:0; }
+  h1 span { color:var(--accent); }
+  .pill {
+    font-family:var(--mono); font-size:11px; font-weight:500; letter-spacing:.06em;
+    text-transform:uppercase; padding:4px 9px; border-radius:2px;
+    background:var(--ok-bg); color:var(--ok); display:inline-flex; align-items:center; gap:6px;
+  }
+  .pill .dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
+  .lede { font-size:1.06rem; color:var(--text-mid); margin:0 0 18px; max-width:64ch; }
+  .lede b { color:var(--text); font-weight:600; }
+  .links { display:flex; gap:10px; flex-wrap:wrap; }
+  .links a {
+    font-family:var(--mono); font-size:12.5px; text-decoration:none; color:var(--text);
+    background:var(--surface); border:1px solid var(--line); border-radius:2px; padding:7px 12px;
+    transition:border-color .15s,color .15s;
+  }
+  .links a:hover, .links a:focus-visible { border-color:var(--accent); color:var(--accent); }
+
+  /* ---- console ---- */
+  .console {
+    background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow);
+    padding:22px; margin-bottom:14px;
+  }
+  textarea {
+    width:100%; min-height:132px; resize:vertical; display:block;
+    font-family:var(--mono); font-size:13.5px; line-height:1.6; color:var(--text);
+    background:var(--bg); border:1px solid var(--line); border-radius:2px; padding:12px 14px;
+    white-space:pre; overflow-wrap:normal; overflow-x:auto;
+  }
+  textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent; }
+  .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0 14px; }
+  button {
+    font-family:var(--sans); font-size:.95rem; font-weight:600; cursor:pointer;
+    background:var(--accent); color:#fff; border:none; border-radius:2px; padding:12px 22px;
+    transition:background .15s;
+  }
+  :root:not([data-theme="light"]) button { color:#0A2226; }
+  @media (prefers-color-scheme: light) { button { color:#fff; } }
+  button:hover { background:var(--accent-2); }
+  button[disabled] { opacity:.55; cursor:not-allowed; }
+  .kbd {
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+  }
+  .kbd b { color:var(--text-mid); font-weight:500; }
+
+  .presets { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .presets .label {
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); margin-right:2px;
+  }
+  .chip {
+    font-family:var(--mono); font-size:12px; cursor:pointer; color:var(--text-mid);
+    background:var(--surface-2); border:1px solid transparent; border-radius:2px; padding:5px 10px;
+    font-weight:400;
+  }
+  .chip:hover, .chip:focus-visible { color:var(--accent); border-color:var(--accent); background:var(--surface-2); }
+  .chip b { color:var(--muted); font-weight:400; }
+  .chip[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); }
+
+  /* ---- status strip ---- */
+  .meta { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+  .badge {
+    font-family:var(--mono); font-size:11.5px; padding:5px 10px; border-radius:2px;
+    background:var(--surface-2); color:var(--text-mid);
+  }
+  .badge.hit  { background:var(--ok-bg); color:var(--ok); font-weight:500; }
+  .badge.miss { background:var(--accent-bg); color:var(--accent-2); font-weight:500; }
+  .badge.code { font-weight:600; }
+  .badge.c2 { background:var(--ok-bg); color:var(--ok); }
+  .badge.c4 { background:var(--warn-bg); color:var(--warn); }
+  .badge.c5 { background:var(--crit-bg); color:var(--crit); }
+
+  /* ---- claim cards ---- */
+  .claim {
+    background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--line);
+    padding:15px 18px; margin-bottom:10px;
+  }
+  .claim.verified     { border-left-color:var(--ok); }
+  .claim.unconfirmed  { border-left-color:var(--warn); }
+  .claim.contradicted { border-left-color:var(--crit); }
+  .claimhead { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:9px; }
+  .verdict {
+    font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.07em;
+    text-transform:uppercase; padding:4px 9px; border-radius:2px;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  .verdict .dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
+  .verdict.verified     { background:var(--ok-bg);   color:var(--ok); }
+  .verdict.unconfirmed  { background:var(--warn-bg); color:var(--warn); }
+  .verdict.contradicted { background:var(--crit-bg); color:var(--crit); }
+  .ctype {
+    font-family:var(--mono); font-size:11px; color:var(--muted);
+    background:var(--surface-2); border-radius:2px; padding:4px 8px;
+  }
+  .claim h3 { font-size:1.02rem; font-weight:600; margin:0 0 6px; line-height:1.45; }
+  .claim .reason { margin:0 0 8px; font-size:.93rem; color:var(--text-mid); }
+  .claim .src { font-family:var(--mono); font-size:12px; word-break:break-all; }
+  .claim .src a { color:var(--accent-2); text-decoration:none; }
+  .claim .src a:hover { text-decoration:underline; }
+  .claim .src.none { color:var(--muted); }
+
+  .notice { padding:18px; border-radius:2px; margin-bottom:12px; }
+  .notice h3 { margin:0 0 6px; font-size:1.02rem; }
+  .notice p { margin:0; font-size:.95rem; }
+  .notice p + p { margin-top:8px; }
+  .notice.good { background:var(--ok-bg); color:var(--ok); }
+  .notice.warn { background:var(--warn-bg); color:var(--warn); }
+  .notice.bad  { background:var(--crit-bg); color:var(--crit); }
+  .notice code { background:rgba(127,127,127,.18); padding:1px 5px; border-radius:2px; font-family:var(--mono); font-size:.85em; }
+
+  .hint {
+    font-size:.9rem; color:var(--muted); margin:12px 0 0;
+    padding-left:12px; border-left:2px solid var(--line);
+  }
+  .hint code { font-family:var(--mono); font-size:.85em; }
+
+  details { margin-top:14px; }
+  summary {
+    font-family:var(--mono); font-size:12px; color:var(--muted); cursor:pointer;
+    padding:6px 0; user-select:none;
+  }
+  summary:hover { color:var(--accent); }
+  pre {
+    font-family:var(--mono); font-size:12.5px; line-height:1.55; margin:8px 0 0;
+    background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--accent);
+    padding:14px; overflow-x:auto; color:var(--text-mid);
+  }
+
+  .skeleton { height:86px; background:var(--surface); border:1px solid var(--line); margin-bottom:10px;
+    background-image:linear-gradient(90deg,transparent,rgba(127,127,127,.09),transparent);
+    background-size:200% 100%; animation:sweep 1.2s infinite; }
+  @keyframes sweep { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
+  /* ---- lower sections ---- */
+  section { margin-top:44px; }
+  h2 { font-size:1.2rem; font-weight:700; letter-spacing:-.015em; margin:0 0 4px; }
+  .sub {
+    font-family:var(--mono); font-size:11.5px; letter-spacing:.05em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 18px; padding-bottom:12px; border-bottom:1px solid var(--line);
+  }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+  .card { background:var(--surface); border:1px solid var(--line); padding:18px; }
+  .card h3 { margin:0 0 7px; font-size:.98rem; font-weight:600; display:flex; align-items:center; gap:8px; }
+  .card h3::before { content:""; width:6px; height:6px; background:var(--accent); flex:none; }
+  .card p { margin:0; font-size:.9rem; color:var(--text-mid); }
+  .card code { font-family:var(--mono); font-size:.85em; background:rgba(127,127,127,.14); padding:1px 5px; border-radius:2px; }
+
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; }
+  th, td { text-align:left; padding:8px 14px 8px 0; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+  th { font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase;
+       color:var(--muted); border-bottom-color:var(--line); white-space:nowrap; font-weight:500; }
+  td:first-child, td:nth-child(2) { font-family:var(--mono); font-size:.83rem; white-space:nowrap; }
+  td code { font-family:var(--mono); font-size:.85em; }
+  .s2 { color:var(--ok); font-weight:600; }
+  .s4 { color:var(--warn); font-weight:600; }
+  .s5 { color:var(--crit); font-weight:600; }
+
+  footer {
+    margin-top:52px; padding-top:20px; border-top:1px solid var(--line);
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+    display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap;
+  }
+  footer a { color:var(--accent-2); }
+
+  @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
+  @media (max-width:560px) {
+    .actions { flex-direction:column; align-items:stretch; }
+    button { width:100%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brandrow">
+      <h1>Serp<span>Guard</span></h1>
+      <span class="pill"><span class="dot"></span>API live</span>
+    </div>
+    <p class="lede">
+      A <b>Ruby on Rails</b> API that pulls the checkable claims out of AI-generated text or code
+      and rules on each one against <b>live Google results</b> — claims extracted by Claude,
+      evidence from SerpApi, verdicts cached in MongoDB. Paste something below; it calls the same
+      public endpoint any client would.
+    </p>
+    <div class="links">
+      <a href="https://github.com/Divyanshu-2907/SerpGuard">Source on GitHub</a>
+      <a href="https://github.com/Divyanshu-2907/SerpGuard#readme">README &amp; engineering notes</a>
+      <a href="/api/v1">Service JSON</a>
+    </div>
+  </header>
+
+  <div class="console">
+    <form id="f">
+      <textarea id="t" spellcheck="false" aria-label="Text or code to check"></textarea>
+      <div class="actions">
+        <button type="submit" id="go">Check Claims</button>
+        <span class="kbd"><b>⌘/Ctrl + Enter</b> to submit</span>
+      </div>
+    </form>
+    <div class="presets">
+      <span class="label">Try</span>
+      <button type="button" class="chip" data-preset="mixed-facts" aria-pressed="false">mixed-facts <b>· one true, one wrong</b></button>
+      <button type="button" class="chip" data-preset="code-hallucination" aria-pressed="false">code-hallucination <b>· real + invented method</b></button>
+      <button type="button" class="chip" data-preset="outdated-stat" aria-pressed="false">outdated-stat <b>· true once</b></button>
+    </div>
+  </div>
+
+  <div id="out" aria-live="polite"></div>
+
+  <section>
+    <h2>What you just called</h2>
+    <p class="sub">One POST, three upstream calls per unseen claim</p>
+    <div class="cards">
+      <div class="card">
+        <h3>Claims, not vibes</h3>
+        <p>Claude splits the input into discrete claims and restates each so it stands alone as a search query — resolving pronouns, keeping version numbers and figures exactly as written. Correcting them would defeat the point.</p>
+      </div>
+      <div class="card">
+        <h3>Judged on sources only</h3>
+        <p>The verdict prompt is told to rule against the returned snippets and <em>not</em> from the model's own knowledge. Otherwise a fact-checker just launders its own priors back as a verdict.</p>
+      </div>
+      <div class="card">
+        <h3>Unreadable ≠ unconfirmed</h3>
+        <p><code>unconfirmed</code> is a real finding: the evidence was thin. A verdict that could not be parsed raises <code>verification_failed</code> instead. There is no code path that quietly turns one into the other.</p>
+      </div>
+      <div class="card">
+        <h3>Cited or dropped</h3>
+        <p>A source URL is kept only if it is one we actually handed to the model. An invented link is dropped and logged rather than passed on as a citation — the verdict still stands on the snippets.</p>
+      </div>
+      <div class="card">
+        <h3>Verdicts are cached</h3>
+        <p>Each claim is keyed by a SHA256 of its normalized text, unique-indexed in MongoDB. Check the same claim twice and the second answer comes back <code>cached: true</code> with zero upstream calls.</p>
+      </div>
+      <div class="card">
+        <h3>Retries, once</h3>
+        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A 4xx that cannot succeed on a second identical attempt is never sent twice.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>API surface</h2>
+    <p class="sub">Every failure uses one error envelope</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Request</th><th>Status</th><th>Response</th></tr></thead>
+        <tbody>
+          <tr><td>POST /api/v1/checks</td><td class="s2">200</td><td>Per-claim verdicts, each with <code>cached</code> and <code>source_url</code></td></tr>
+          <tr><td>…repeat claim</td><td class="s2">200</td><td><code>cached: true</code> — served from MongoDB, no API calls</td></tr>
+          <tr><td>GET /api/v1/health</td><td class="s2">200</td><td>Liveness. Touches no dependency, so it never flaps</td></tr>
+          <tr><td>missing <code>text</code></td><td class="s4">400</td><td><code>parameter_missing</code></td></tr>
+          <tr><td>unparsable body</td><td class="s4">400</td><td><code>malformed_json</code></td></tr>
+          <tr><td>bad / missing key</td><td class="s4">401</td><td><code>api_key_missing</code> · <code>api_key_invalid</code></td></tr>
+          <tr><td>bad <code>max_claims</code></td><td class="s4">422</td><td><code>validation_failed</code></td></tr>
+          <tr><td>text over 50k chars</td><td class="s4">413</td><td><code>payload_too_large</code></td></tr>
+          <tr><td>31st check / minute</td><td class="s5">429</td><td><code>rate_limited</code> + <code>Retry-After</code></td></tr>
+          <tr><td>unreadable verdict</td><td class="s5">500</td><td><code>verification_failed</code> — never a silent <code>unconfirmed</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">
+      Authenticate with an <code>X-API-Key</code> header. This page uses the public key
+      <code>demo-key</code>, rate limited to 30 checks per minute.
+    </p>
+  </section>
+
+  <footer>
+    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 161 specs</span>
+    <span><a href="https://github.com/Divyanshu-2907/SerpGuard">Divyanshu-2907/SerpGuard</a></span>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var API_KEY = "demo-key";
+  var COLD_START_MS = 2500;
+
+  var out = document.getElementById("out");
+  var form = document.getElementById("f");
+  var input = document.getElementById("t");
+  var go = document.getElementById("go");
+  var chips = document.querySelectorAll(".chip");
+
+  // Each preset exercises a different path through the pipeline. The labels
+  // describe the INPUT, not the expected verdict - the verdict comes from
+  // whatever Google actually returns at the moment you press the button.
+  var PRESETS = {
+    "mixed-facts":
+      "Ruby 3.3 shipped YJIT as a production-ready JIT compiler when it was released in " +
+      "December 2023. Rails 8 followed in March 2023, bringing Solid Queue and Kamal 2 into " +
+      "the default stack.",
+
+    "code-hallucination":
+      'require "active_support/all"\n' +
+      "\n" +
+      "# Collapse runs of whitespace\n" +
+      'puts "  hello   world  ".squish\n' +
+      "\n" +
+      "# Double every number, then total them\n" +
+      "puts [1, 2, 3].sum_by { |n| n * 2 }\n",
+
+    "outdated-stat":
+      "Ruby's current stable release is 3.1.4, and RubyGems hosts roughly 170,000 published gems."
+  };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function codeClass(status) {
+    return status < 300 ? "c2" : status < 500 ? "c4" : "c5";
+  }
+
+  function verdictClass(verdict) {
+    return verdict === "verified" || verdict === "unconfirmed" || verdict === "contradicted"
+      ? verdict
+      : "unconfirmed";
+  }
+
+  function rawBlock(data) {
+    return '<details><summary>▸ Raw JSON response</summary><pre>' +
+      esc(JSON.stringify(data, null, 2)) + "</pre></details>";
+  }
+
+  function statusStrip(status, data, ms) {
+    var badges = '<span class="badge code ' + codeClass(status) + '">HTTP ' + status + "</span>";
+    badges += '<span class="badge">' + Math.round(ms) + " ms</span>";
+
+    var summary = data && data.input_summary;
+    if (summary) {
+      var total = summary.claims_extracted;
+      var cached = summary.cached_claims;
+      badges += '<span class="badge">' + total + (total === 1 ? " claim" : " claims") + " checked</span>";
+      badges += cached > 0
+        ? '<span class="badge hit">' + cached + " from cache</span>"
+        : '<span class="badge miss">0 from cache</span>';
+
+      var tally = summary.verdicts || {};
+      ["verified", "unconfirmed", "contradicted"].forEach(function (verdict) {
+        if (tally[verdict]) {
+          badges += '<span class="badge ' + (verdict === "verified" ? "c2" : verdict === "unconfirmed" ? "c4" : "c5") +
+            '">' + tally[verdict] + " " + verdict + "</span>";
+        }
+      });
+    }
+
+    return '<div class="meta">' + badges + "</div>";
+  }
+
+  function claimCard(claim) {
+    var verdict = verdictClass(claim.verdict);
+    var html = '<div class="claim ' + verdict + '">';
+
+    html += '<div class="claimhead">';
+    html += '<span class="verdict ' + verdict + '"><span class="dot"></span>' + esc(claim.verdict) + "</span>";
+    if (claim.type) html += '<span class="ctype">' + esc(claim.type) + "</span>";
+    if (claim.cached) html += '<span class="badge hit">cached</span>';
+    html += "</div>";
+
+    html += "<h3>" + esc(claim.claim) + "</h3>";
+    html += '<p class="reason">' + esc(claim.reason) + "</p>";
+
+    html += claim.source_url
+      ? '<div class="src"><a href=' + JSON.stringify(claim.source_url) +
+        ' target="_blank" rel="noopener noreferrer">' + esc(claim.source_url) + "</a></div>"
+      : '<div class="src none">No single result carried this verdict.</div>';
+
+    return html + "</div>";
+  }
+
+  function errorNotice(status, data) {
+    var error = (data && data.error) || {};
+    var code = error.code || "error";
+
+    if (status === 401) {
+      return '<div class="notice warn"><h3>Not authenticated</h3>' +
+        "<p>" + esc(error.message || "") + "</p>" +
+        "<p>This page sends the public key <code>demo-key</code>. If you are running SerpGuard " +
+        "yourself, include it in <code>SERPGUARD_API_KEYS</code>.</p></div>";
+    }
+    if (status === 429) {
+      return '<div class="notice warn"><h3>Rate limited</h3><p>' + esc(error.message || "") +
+        " Every check costs upstream API calls, so the public demo is capped.</p></div>";
+    }
+    if (code === "claim_extraction_failed") {
+      return '<div class="notice warn"><h3>Nothing checkable in that text</h3>' +
+        "<p>" + esc(error.message || "") + "</p>" +
+        "<p>Opinions, instructions and predictions are skipped on purpose — only claims that can " +
+        "be checked against a public source come back. Try one of the presets.</p></div>";
+    }
+    if (code === "verification_failed") {
+      return '<div class="notice bad"><h3>Verification failed — deliberately loud</h3>' +
+        "<p>" + esc(error.message || "") + "</p>" +
+        "<p>A verdict that could not be read is reported as an error rather than downgraded to " +
+        "<code>unconfirmed</code>. Confusing the two would quietly corrupt every result.</p></div>";
+    }
+    if (code === "configuration_error" || code === "credential_missing") {
+      return '<div class="notice bad"><h3>' + esc(code) + "</h3>" +
+        "<p>" + esc(error.message || "") + "</p>" +
+        "<p>This instance is missing an upstream credential — an operator problem, not yours.</p></div>";
+    }
+
+    return '<div class="notice bad"><h3>' + esc(code) + "</h3><p>" + esc(error.message || "") + "</p></div>";
+  }
+
+  function render(status, data, ms) {
+    var html = statusStrip(status, data, ms);
+
+    if (status >= 400 || !data || !data.claims) {
+      html += errorNotice(status, data);
+      out.innerHTML = html + rawBlock(data);
+      return;
+    }
+
+    data.claims.forEach(function (claim) { html += claimCard(claim); });
+
+    var cached = (data.input_summary || {}).cached_claims || 0;
+    html += cached === data.claims.length
+      ? '<p class="hint">Every verdict came from MongoDB — no Claude call to rule on them, no ' +
+        "SerpApi search. Compare the response time above with the first run.</p>"
+      : '<p class="hint">Verdicts are now stored. Press <b>Check Claims</b> again with the same ' +
+        "text to see them come back <code>cached: true</code> without any upstream calls.</p>";
+
+    out.innerHTML = html + rawBlock(data);
+  }
+
+  function loading() {
+    out.innerHTML =
+      '<div class="meta"><span class="badge">checking…</span></div>' +
+      '<div class="skeleton"></div><div class="skeleton"></div>' +
+      '<p class="hint" id="cold" hidden>Still waking up — this service runs on a free instance ' +
+      "that sleeps after 15 minutes of inactivity. The first request can take up to a minute. " +
+      "Each unseen claim also costs a Claude call and a live Google search, so a cold first " +
+      "check is the slow one.</p>";
+
+    return setTimeout(function () {
+      var cold = document.getElementById("cold");
+      if (cold) cold.hidden = false;
+    }, COLD_START_MS);
+  }
+
+  function run() {
+    var text = input.value;
+    if (!text.trim()) {
+      out.innerHTML = '<div class="notice warn"><h3>Nothing to check</h3>' +
+        "<p>Paste some text or code, or pick one of the presets above.</p></div>";
+      return;
+    }
+
+    go.disabled = true;
+    var coldTimer = loading();
+    var started = performance.now();
+
+    fetch("/api/v1/checks", {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-API-Key": API_KEY },
+      body: JSON.stringify({ text: text }),
+      cache: "no-store"
+    })
+      .then(function (res) {
+        return res.text().then(function (body) {
+          var data = null;
+          try { data = JSON.parse(body); } catch (e) { data = { error: { code: "unparsable_response", message: body.slice(0, 400) } }; }
+          return { status: res.status, data: data };
+        });
+      })
+      .then(function (r) {
+        render(r.status, r.data, performance.now() - started);
+      })
+      .catch(function (err) {
+        out.innerHTML = '<div class="notice bad"><h3>Could not reach the API</h3><p>' +
+          esc(err.message) + ". The instance may still be waking up — try again in a few seconds.</p></div>";
+      })
+      .finally(function () {
+        clearTimeout(coldTimer);
+        go.disabled = false;
+      });
+  }
+
+  function loadPreset(name, chip) {
+    input.value = PRESETS[name] || "";
+    Array.prototype.forEach.call(chips, function (other) {
+      other.setAttribute("aria-pressed", String(other === chip));
+    });
+    input.focus();
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    run();
+  });
+
+  input.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      run();
+    }
+  });
+
+  Array.prototype.forEach.call(chips, function (chip) {
+    chip.addEventListener("click", function () {
+      loadPreset(chip.getAttribute("data-preset"), chip);
+    });
+  });
+
+  // Prefill, but do NOT auto-check: unlike a read-only search, every run spends
+  // Claude and SerpApi credits. The visitor decides when to spend them.
+  loadPreset("mixed-facts", chips[0]);
+  out.innerHTML = '<p class="hint">Press <b>Check Claims</b> to run the text above, or pick ' +
+    "another preset. Nothing is sent until you do.</p>";
+})();
+</script>
+</body>
+</html>

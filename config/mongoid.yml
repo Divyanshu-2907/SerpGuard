@@ -1,0 +1,38 @@
+# Mongoid replaces Active Record in this app (generated with --skip-active-record).
+# This file is ERB-evaluated, so every environment reads its connection string
+# from the environment rather than hardcoding one.
+development:
+  clients:
+    default:
+      # `.presence ||` rather than ENV.fetch: a copied .env sets MONGODB_URI to
+      # an empty string, and fetch only falls back when the key is ABSENT, so an
+      # empty value used to reach Mongoid as a nil URI and break every DB call.
+      uri: <%= ENV["MONGODB_URI"].presence || "mongodb://127.0.0.1:27017/serpguard_development" %>
+      options:
+        # Fail fast instead of hanging for 30s when no mongod is running.
+        server_selection_timeout: 5
+  options:
+    # Log queries at debug level in development only.
+    log_level: :debug
+
+test:
+  clients:
+    default:
+      uri: <%= ENV["MONGODB_URI_TEST"].presence || "mongodb://127.0.0.1:27017/serpguard_test" %>
+      options:
+        server_selection_timeout: 2
+  options:
+    log_level: :warn
+
+production:
+  clients:
+    default:
+      # Mongoid ERB-renders every environment block on every boot, so this
+      # cannot raise unconditionally - it would raise in development too. Only
+      # production treats a missing (or empty) URI as fatal; elsewhere this value
+      # is rendered but never used.
+      uri: <%= ENV["MONGODB_URI"].presence || (Rails.env.production? ? raise("MONGODB_URI must be set in production") : "mongodb://127.0.0.1:27017/serpguard_production") %>
+      options:
+        server_selection_timeout: 10
+  options:
+    log_level: :warn

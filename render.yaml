@@ -1,0 +1,52 @@
+# Render blueprint. Deploy with: New → Blueprint, pointed at this repo.
+#
+# Same shape as the sibling MiniSERP service: Ruby runtime, no asset pipeline,
+# Puma reading config/puma.rb, secrets set in the dashboard rather than here.
+services:
+  - type: web
+    name: serpguard
+    runtime: ruby
+    plan: free
+
+    # Explicitly just `bundle install`. Render's dashboard pre-fills a build
+    # command containing `rake assets:precompile`, which does not exist in an
+    # API-only app and aborts the build. Setting it here avoids that entirely.
+    buildCommand: bundle install
+    startCommand: bundle exec puma -C config/puma.rb
+
+    # GET /api/v1/health is unauthenticated and deliberately probes nothing - no
+    # MongoDB, no Anthropic, no SerpApi - so Render's checks never fail because a
+    # third party is slow. That is the whole reason it exists.
+    healthCheckPath: /api/v1/health
+
+    # The unique index on Claim#claim_hash is declared in the model but not
+    # created by it. Run this once against the production URI (see README →
+    # Deployment); Render's preDeployCommand is not available on the free plan:
+    #
+    # preDeployCommand: bundle exec rails db:mongoid:create_indexes
+
+    envVars:
+      - key: RAILS_ENV
+        value: production
+
+      # One Puma worker on a 512MB free instance: each worker loads the whole
+      # app. Rack::Attack's counters live in Rails.cache, which is a FileStore
+      # here, so limits are per-instance either way.
+      - key: WEB_CONCURRENCY
+        value: 1
+
+      # Secrets: `sync: false` means Render prompts for these instead of reading
+      # them from this file. Never commit their values.
+      - key: MONGODB_URI
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SERPAPI_KEY
+        sync: false
+      - key: SERPGUARD_API_KEYS
+        sync: false
+
+      # Only needed if you start reading Rails encrypted credentials; nothing
+      # does today. Left here because production has no config/master.key.
+      - key: RAILS_MASTER_KEY
+        sync: false
