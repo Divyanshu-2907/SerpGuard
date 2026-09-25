@@ -10,7 +10,7 @@ gem "puma", ">= 5.0"
 # `::JSON.parse(json, options)` - so with json 3.x EVERY JSON request body fails
 # to parse with "wrong number of arguments", and httparty 0.24.2's
 # response.parsed_response raises too. Revisit when Rails ships json 3 support.
-gem "json", "~> 2.9"
+gem "json", "~> 3.0"
 
 # --- SerpGuard ---------------------------------------------------------------
 # HTTP client for the SerpApi + Anthropic calls.
