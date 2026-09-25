@@ -6,6 +6,32 @@
 
 Built for the SerpApi India Hackathon 2026 — AI Agents track.
 
+**Live:** <https://serpguard.onrender.com>
+
+---
+
+## Try it right now
+
+Open <https://serpguard.onrender.com> and press **Check Claims**, or call it directly:
+
+```sh
+curl -X POST https://serpguard.onrender.com/api/v1/checks \
+  -H 'content-type: application/json' \
+  -H 'X-API-Key: demo-key' \
+  -d '{"text":"The Eiffel Tower is located in London."}'
+```
+
+```sh
+curl https://serpguard.onrender.com/api/v1/health     # liveness, no key needed
+curl https://serpguard.onrender.com/api/v1            # service description as JSON
+curl -X POST https://serpguard.onrender.com/api/v1/checks -d '{"text":"x"}'   # 401, no key
+```
+
+> **The free instance sleeps after 15 minutes of inactivity**, so the first request may take up to a
+> minute. An unseen claim then takes 10-20 seconds — it is two Claude calls and a live Google search
+> per claim. Send the same text twice and the second response comes back `cached: true` in a second
+> or two, having made no upstream calls at all.
+
 ---
 
 ## What it does, and why
@@ -387,8 +413,8 @@ would be the very thing the URL check exists to prevent.
 
 ## Deployment
 
-Not deployed yet. [`render.yaml`](render.yaml) is a Render blueprint with the settings already
-filled in:
+Deployed at <https://serpguard.onrender.com> from [`render.yaml`](render.yaml), a Render blueprint with the
+settings already filled in:
 
 | Setting | Value |
 | ------- | ----- |
