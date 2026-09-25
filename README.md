@@ -29,7 +29,7 @@ There is a browser demo at `GET /` and a JSON service description at `GET /api/v
 ## Stack
 
 Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Attack · RSpec + WebMock ·
-175 specs, no live network calls
+198 specs, no live network calls
 
 ---
 
@@ -40,8 +40,8 @@ Three service objects, each with one job, composed by the third:
 | Object | Input → output | Responsibility |
 | ------ | -------------- | -------------- |
 | `ClaimExtractorService` | text → `[Claim(claim:, type:)]` | Asks Claude for the independently checkable claims, each restated to stand alone, typed `fact` / `code_api` / `statistic`. Validates the JSON that comes back. |
-| `ClaimVerifierService` | one claim → `{claim:, verdict:, reason:, source_url:}` | Claude writes a search query → SerpApi runs it → Claude rules on the claim against the snippets. Validates the verdict. |
-| `SerpGuardService` | text → the full report | Extracts once, then per claim prefers a cached verdict over three paid API calls. Persists new verdicts. |
+| `ClaimVerifierService` | one claim → `{claim:, verdict:, reason:, source_url:}` | Claude writes a search query → SerpApi runs it → Claude rules on the claim against the snippets. Reformulates the query once if the results came back about something else. Validates the verdict. |
+| `SerpGuardService` | text → the full report | Extracts once, then per claim prefers a cached verdict over the upstream calls a fresh one costs. Persists new verdicts. |
 
 Below them sit two transports and nothing else:
 
@@ -78,6 +78,29 @@ That buys three specific things:
 - **API-shape knowledge stays in one place.** That Claude interleaves thinking blocks with text
   blocks, that SerpApi reports "no results" as an `error` string on an HTTP 200 — each of those
   lives in its own client, not smeared across the services.
+
+### Why a missed query gets one second chance
+
+A query can read perfectly and still miss. A live run generated
+`Ruby on Rails initial release year 2004` — which contains "Ruby on Rails" — and Google answered
+with a civil rights activist's Instagram, a music video, a raid guide and Ruby-the-language. Drop
+one word (`year`) and the same search returns "Hansson first released Rails as open source in July
+2004" at position one.
+
+Every component had behaved correctly: the claim was fine, the query was reasonable, and the verdict
+step honestly reported that the snippets never mentioned Rails. The claim was simply unverifiable
+from those results, so the answer was `unconfirmed` — right about the evidence, wrong about the world.
+
+So the verifier checks whether the results mention any of the claim's distinctive terms — code
+identifiers and *multi-word* proper nouns, never single capitalised words, because "Ruby" is exactly
+what matched the activist and the raid guide. If a verdict comes back `unconfirmed` **and** the
+results never mentioned the subject, the query is reformulated once and re-searched. It fires only on
+that path, so the common case costs nothing extra.
+
+The same run cited an Instagram reel for "the Eiffel Tower is in London". The verdict was right and
+the citation was useless, so evidence is now ordered by source authority — reference works and
+official docs ahead of social and video — before it reaches the model. Ordering only: nothing is
+discarded, and a social post still carries a verdict when it is all Google returned.
 
 ### Why caching is per claim, not per request
 
@@ -142,7 +165,7 @@ bin/rails db:mongoid:create_indexes
 
 ```sh
 bin/rails server                 # then open http://localhost:3000
-bundle exec rspec                # 175 examples, needs a local mongod
+bundle exec rspec                # 198 examples, needs a local mongod
 bundle exec rubocop              # rubocop-rails-omakase
 bundle exec rails zeitwerk:check # eager-load check, as production does it
 ```
@@ -210,8 +233,25 @@ curl -X POST http://localhost:3000/api/v1/checks \
 
 Send the same text again and both claims come back `"cached": true` with no upstream calls at all.
 
-`max_claims` is optional, clamped to 1–25 — each claim costs two Claude calls and one SerpApi search,
-so it is a spend limit as much as a response-size one.
+`max_claims` is optional, clamped to 1–25 — an unseen claim costs two Claude calls and one SerpApi
+search, or three and two when its first query has to be reformulated, so it is a spend limit as much
+as a response-size one. A cached claim costs nothing.
+
+### Verdicts
+
+| Verdict | Means |
+| ------- | ----- |
+| `verified` | A result states or clearly implies the claim is correct |
+| `contradicted` | A result states something incompatible with the claim |
+| `unconfirmed` | The results neither support nor refute it — the claim is unsourced, not disproved |
+
+**One deliberate exception, for `code_api` claims only.** If a claim names a method or API and
+that name appears in **no** search result — across every query tried — the verdict is
+`contradicted`, not `unconfirmed`, with `source_url: null`. A real method name returns *something*
+for a search of its own name, so silence is evidence here in a way it is not for an ordinary fact.
+The escalation is narrow on purpose: `code_api` claims only, only from `unconfirmed` (a ruling that
+came from a snippet is never overridden), and never when the search returned nothing at all — zero
+results means the query failed, not that the method is fake.
 
 ### Errors
 
@@ -245,7 +285,7 @@ Claims** button, and three preset chips that each exercise a different path:
 | Chip | Input | Exercises |
 | ---- | ----- | --------- |
 | `mixed-facts` | One true claim and one subtly wrong date in a single paragraph | Two claims, opposite verdicts, one input |
-| `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_by` | `code_api` claims; a method that does not exist |
+| `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_by` | `code_api` claims; the invented one comes back `contradicted`, not merely unsourced |
 | `outdated-stat` | A version and a gem count that were both true once | A `statistic` that live results should now contradict |
 
 Results render one card per claim with a verdict badge (green / yellow / red), the reason and a
@@ -311,7 +351,29 @@ The same principle runs through the error hierarchy: a blank claim is a 422, a m
 500 `configuration_error`, an upstream outage is distinct from a parse failure. Collapsing them into
 one generic "something went wrong" would be easier to write and impossible to debug.
 
-### 3. What I'd do differently at real scale
+### 3. Absence of evidence — for code APIs, and nowhere else
+
+Note 1 says the model rules on what the sources say, not on what it knows. Note 2 says a verdict we
+could not read is never quietly downgraded. This is the one place the rules bend, and it is worth
+being explicit about why.
+
+`unconfirmed` for `ActiveRecord::Base.magic_query` is defensible — no snippet says a method *does
+not* exist — and it is also close to useless. Catching hallucinated code references is the reason
+this project exists, and answering "we could not find out" about an invented method buries the single
+most valuable thing the system found.
+
+The asymmetry that justifies it: a real method name returns *something* for a search of its own name
+— docs, a changelog, a Stack Overflow question, an angry blog post. An ordinary fact has no such
+guarantee; plenty of true statements are simply not written down anywhere Google indexes. So silence
+carries information for a code identifier that it does not carry for a fact, and the escalation is
+restricted to exactly that case.
+
+It is still an inference rather than a citation, so it is fenced in: `code_api` claims only, only
+from `unconfirmed`, only after every query has been tried, never when the search returned nothing,
+and always with `source_url: null` — there is no result to cite for an absence, and inventing one
+would be the very thing the URL check exists to prevent.
+
+### 4. What I'd do differently at real scale
 
 - **Fan out the per-claim verification.** It is sequential today; ten claims are ten round trips.
   A job queue with per-claim jobs and a polled result would cut wall-clock time substantially.

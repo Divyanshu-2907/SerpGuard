@@ -254,7 +254,7 @@
 
   <section>
     <h2>What you just called</h2>
-    <p class="sub">One POST, three upstream calls per unseen claim</p>
+    <p class="sub">One POST, three upstream calls per unseen claim - five if a query misses</p>
     <div class="cards">
       <div class="card">
         <h3>Claims, not vibes</h3>
@@ -277,8 +277,12 @@
         <p>Each claim is keyed by a SHA256 of its normalized text, unique-indexed in MongoDB. Check the same claim twice and the second answer comes back <code>cached: true</code> with zero upstream calls.</p>
       </div>
       <div class="card">
+        <h3>A method that isn't there</h3>
+        <p>For a <code>code_api</code> claim whose method name appears in <em>no</em> result, the verdict is <code>contradicted</code>, not <code>unconfirmed</code>. A real method name returns something for a search of its own name — an ordinary fact has no such guarantee, which is why the rule stops at code.</p>
+      </div>
+      <div class="card">
         <h3>Retries, once</h3>
-        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A 4xx that cannot succeed on a second identical attempt is never sent twice.</p>
+        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A query whose results come back about a different subject also gets one rewrite — and only then. A 4xx that cannot succeed on a second identical attempt is never sent twice.</p>
       </div>
     </div>
   </section>
@@ -310,7 +314,7 @@
   </section>
 
   <footer>
-    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 161 specs</span>
+    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 198 specs</span>
     <span><a href="https://github.com/Divyanshu-2907/SerpGuard">Divyanshu-2907/SerpGuard</a></span>
   </footer>
 

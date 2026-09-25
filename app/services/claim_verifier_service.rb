@@ -8,7 +8,8 @@
 #   #      reason: "The 3.3.0 release notes list YJIT as production-ready.",
 #   #      source_url: "https://www.ruby-lang.org/en/news/..." }
 #
-# Step two of the pipeline, and three upstream calls deep:
+# Step two of the pipeline, three upstream calls deep - five if the first query
+# comes back about the wrong subject:
 #
 #   1. Claude turns the claim into a search query
 #   2. SerpApi runs that query against Google

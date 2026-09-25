@@ -24,7 +24,8 @@ module Api
         params.require(:text)
       end
 
-      # Each claim costs two Claude calls and one SerpApi search, so the cap is a
+      # An unseen claim costs two Claude calls and one SerpApi search, or three and
+      # two when its query has to be reformulated, so the cap is a
       # spend limit as much as a response-size one. Clamped rather than rejected:
       # a caller asking for 500 claims gets the maximum, not an error.
       def max_claims

@@ -5,12 +5,13 @@
 #   SerpGuardService.call("Ruby 3.3 shipped YJIT. Rails 8 has 400M downloads.")
 #   # => { input_summary: {...}, claims: [{...}, {...}], checked_at: <Time> }
 #
-# Extract the claims once, then for each one prefer a stored verdict over three
-# fresh upstream calls. Cache hits are marked `cached: true` so a caller can see
+# Extract the claims once, then for each one prefer a stored verdict over the
+# fresh upstream calls it would otherwise cost. Cache hits are marked `cached: true` so a caller can see
 # which verdicts were re-used rather than re-checked.
 #
 # Cost is the reason this class exists in this shape: every uncached claim is two
-# Claude calls plus one SerpApi search, and they are charged per call.
+# Claude calls plus one SerpApi search - three and two if its query has to be
+# reformulated - and they are charged per call.
 class SerpGuardService
   class << self
     def call(text, **options)
