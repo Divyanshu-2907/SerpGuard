@@ -13,6 +13,9 @@
 # Claude calls plus one SerpApi search - three and two if its query has to be
 # reformulated - and they are charged per call.
 class SerpGuardService
+  # Returned instead of a claim list when the text holds nothing checkable.
+  NO_CLAIMS_MESSAGE = "No checkable factual claims found."
+
   class << self
     def call(text, **options)
       new(text, **options).call
@@ -39,7 +42,12 @@ class SerpGuardService
     {
       input_summary: summarize(claims),
       claims: claims,
-      checked_at: checked_at
+      checked_at: checked_at,
+      # Only set when there is nothing to report, so a normal response is not
+      # cluttered with a null field. Text made of opinions or instructions is a
+      # valid submission with a legitimately empty answer - saying so beats
+      # handing back an empty list with no explanation.
+      message: claims.empty? ? NO_CLAIMS_MESSAGE : nil
     }
   end
 

@@ -14,8 +14,11 @@ class SerpGuardResponseSerializer
     {
       checked_at: iso8601(result[:checked_at]),
       input_summary: input_summary,
-      claims: Array(result[:claims]).map { |claim| claim_json(claim) }
-    }
+      claims: Array(result[:claims]).map { |claim| claim_json(claim) },
+      # Present only when there were no claims to report. `compact` drops it the
+      # rest of the time rather than shipping a null on every response.
+      message: result[:message]
+    }.compact
   end
 
   private

@@ -284,6 +284,98 @@ RSpec.describe "POST /api/v1/checks", type: :request do
     end
   end
 
+  # "Nothing to check" and "could not read the reply" used to collapse into the
+  # same 500. They are different answers and now have different status codes.
+  describe "text with no checkable claims" do
+    let(:opinion) { "Rails is the best framework and everyone should use it." }
+
+    before { stub_claude_routing(claims: [], query: search_query, verdict: verdict) }
+
+    def submit_opinion
+      post "/api/v1/checks", params: { text: opinion }, headers: api_key_headers, as: :json
+    end
+
+    it "answers 200, not 500" do
+      submit_opinion
+
+      expect(response).to have_http_status(:ok)
+    end
+
+    it "returns an empty claim list with a message explaining why" do
+      submit_opinion
+
+      expect(json["claims"]).to eq([])
+      expect(json["message"]).to eq("No checkable factual claims found.")
+      expect(json["input_summary"]).to include(
+        "claims_extracted" => 0,
+        "cached_claims" => 0,
+        "verdicts" => { "verified" => 0, "unconfirmed" => 0, "contradicted" => 0 }
+      )
+      expect(json["checked_at"]).to be_present
+    end
+
+    it "carries no error envelope" do
+      submit_opinion
+
+      expect(json).not_to have_key("error")
+    end
+
+    it "spends nothing on verification - there is nothing to verify" do
+      submit_opinion
+
+      expect(an_extraction_request).to have_been_made.once
+      expect(a_search_query_request).not_to have_been_made
+      expect(a_verdict_request).not_to have_been_made
+      expect(a_serpapi_request).not_to have_been_made
+      expect(Claim.count).to eq(0)
+    end
+
+    it "omits the message entirely when there are claims to report" do
+      stub_full_pipeline
+      submit
+
+      expect(response).to have_http_status(:ok)
+      expect(json).not_to have_key("message")
+    end
+  end
+
+  describe "a reply that could not be read" do
+    def submit_opinion
+      post "/api/v1/checks", params: { text: "anything" }, headers: api_key_headers, as: :json
+    end
+
+    it "still returns 500 when the extraction reply is not JSON" do
+      stub_claude_routing(claims: "I'm afraid I can't help with that.", query: search_query, verdict: verdict)
+
+      submit_opinion
+
+      expect(response).to have_http_status(:internal_server_error)
+      expect(json.dig("error", "code")).to eq("claim_extraction_failed")
+    end
+
+    it "still returns 500 when the reply is a JSON object rather than a list" do
+      stub_claude_routing(claims: { claims: [] }.to_json, query: search_query, verdict: verdict)
+
+      submit_opinion
+
+      expect(response).to have_http_status(:internal_server_error)
+      expect(json.dig("error", "code")).to eq("claim_extraction_failed")
+    end
+
+    it "still returns 500 on an unknown claim type" do
+      stub_claude_routing(
+        claims: [ { claim: "Rails is great", type: "opinion" } ],
+        query: search_query,
+        verdict: verdict
+      )
+
+      submit_opinion
+
+      expect(response).to have_http_status(:internal_server_error)
+      expect(json.dig("error", "code")).to eq("claim_extraction_failed")
+    end
+  end
+
   describe "upstream failure" do
     it "surfaces a verification failure as a 500 with its own code" do
       stub_claude_routing(claims: extracted_claims, query: search_query, verdict: "not json at all")

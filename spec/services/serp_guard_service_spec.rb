@@ -237,4 +237,27 @@ RSpec.describe SerpGuardService do
       expect(Claim.count).to eq(0)
     end
   end
+
+  describe "when the text holds nothing checkable" do
+    before { allow(extractor).to receive(:call).and_return([]) }
+
+    it "reports zero claims with a message instead of raising" do
+      result = run
+
+      expect(result[:claims]).to eq([])
+      expect(result[:message]).to eq(described_class::NO_CLAIMS_MESSAGE)
+      expect(result[:input_summary]).to include(claims_extracted: 0, cached_claims: 0)
+    end
+
+    it "never reaches the verifier" do
+      run
+
+      expect(verifier).not_to have_received(:call)
+      expect(Claim.count).to eq(0)
+    end
+
+    it "leaves the message nil when there are claims, so it is omitted on the wire" do
+      expect(run(extractor: class_double(ClaimExtractorService, call: [ first_claim ]))[:message]).to be_nil
+    end
+  end
 end

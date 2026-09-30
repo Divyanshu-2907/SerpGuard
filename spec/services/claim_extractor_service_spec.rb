@@ -124,6 +124,22 @@ RSpec.describe ClaimExtractorService do
     end
   end
 
+  describe "text with nothing checkable in it" do
+    it "returns no claims rather than raising" do
+      stub_claude_claims([])
+
+      expect(described_class.call("Rails is the best framework")).to eq([])
+    end
+
+    it "is an answer, not a failure - the distinction the 500 used to blur" do
+      stub_claude_claims([])
+
+      # An empty array means Claude read the text and found nothing checkable.
+      # A reply it could not read is the case below, and still raises.
+      expect { described_class.call("Rails is the best framework") }.not_to raise_error
+    end
+  end
+
   describe "a malformed response from Claude" do
     it "raises ExtractionFailed when the reply is not JSON at all" do
       stub_claude_text("I'm afraid I can't help with that request.")
@@ -144,13 +160,6 @@ RSpec.describe ClaimExtractorService do
 
       expect { described_class.call(text) }
         .to raise_error(SerpGuard::Errors::ExtractionFailed, /Expected a JSON array/)
-    end
-
-    it "raises ExtractionFailed on an empty array" do
-      stub_claude_claims([])
-
-      expect { described_class.call(text) }
-        .to raise_error(SerpGuard::Errors::ExtractionFailed, /did not find any checkable claims/)
     end
 
     it "raises ExtractionFailed when an entry is missing its claim text" do

@@ -245,9 +245,9 @@
     </form>
     <div class="presets">
       <span class="label">Try</span>
-      <button type="button" class="chip" data-preset="mixed-facts" aria-pressed="false">mixed-facts <b>· one true, one wrong</b></button>
+      <button type="button" class="chip" data-preset="mixed-facts" aria-pressed="false">mixed-facts <b>· two true, one wrong</b></button>
       <button type="button" class="chip" data-preset="code-hallucination" aria-pressed="false">code-hallucination <b>· real + invented method</b></button>
-      <button type="button" class="chip" data-preset="outdated-stat" aria-pressed="false">outdated-stat <b>· true once</b></button>
+      <button type="button" class="chip" data-preset="outdated-stat" aria-pressed="false">outdated-stat <b>· true in 2023</b></button>
     </div>
   </div>
 
@@ -339,9 +339,8 @@
   // whatever Google actually returns at the moment you press the button.
   var PRESETS = {
     "mixed-facts":
-      "Ruby 3.3 shipped YJIT as a production-ready JIT compiler when it was released in " +
-      "December 2023. Rails 8 followed in March 2023, bringing Solid Queue and Kamal 2 into " +
-      "the default stack.",
+      "Ruby on Rails was created by David Heinemeier Hansson in 2004. The Eiffel Tower is " +
+      "located in London.",
 
     "code-hallucination":
       'require "active_support/all"\n' +
@@ -353,7 +352,7 @@
       "puts [1, 2, 3].sum_by { |n| n * 2 }\n",
 
     "outdated-stat":
-      "Ruby's current stable release is 3.1.4, and RubyGems hosts roughly 170,000 published gems."
+      "Ruby's current stable release is 3.1.4."
   };
 
   function esc(s) {
@@ -438,10 +437,12 @@
         " Every check costs upstream API calls, so the public demo is capped.</p></div>";
     }
     if (code === "claim_extraction_failed") {
-      return '<div class="notice warn"><h3>Nothing checkable in that text</h3>' +
+      return '<div class="notice bad"><h3>Could not read the extraction result</h3>' +
         "<p>" + esc(error.message || "") + "</p>" +
-        "<p>Opinions, instructions and predictions are skipped on purpose — only claims that can " +
-        "be checked against a public source come back. Try one of the presets.</p></div>";
+        "<p>This is not &ldquo;nothing to check&rdquo; — that answers <code>200</code> with a " +
+        "message. This means the reply itself was unreadable: not JSON, not a list, cut off at " +
+        "the token limit, or carrying a claim type that does not exist. Reported rather than " +
+        "guessed at.</p></div>";
     }
     if (code === "verification_failed") {
       return '<div class="notice bad"><h3>Verification failed — deliberately loud</h3>' +
@@ -463,6 +464,20 @@
 
     if (status >= 400 || !data || !data.claims) {
       html += errorNotice(status, data);
+      out.innerHTML = html + rawBlock(data);
+      return;
+    }
+
+    // A valid request that simply had nothing to check. Not an error, and not
+    // an empty box either - say what happened and why.
+    if (data.claims.length === 0) {
+      html += '<div class="notice good"><h3>' +
+        esc(data.message || "No checkable factual claims found.") + "</h3>" +
+        "<p>The text was read, and none of it is checkable against a public source. Opinions, " +
+        "preferences, predictions and instructions are skipped on purpose — there is nothing " +
+        "for a search engine to confirm or refute.</p>" +
+        "<p>This is a <code>200</code>, not an error. Try one of the presets for text that does " +
+        "contain checkable claims.</p></div>";
       out.innerHTML = html + rawBlock(data);
       return;
     }

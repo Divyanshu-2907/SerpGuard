@@ -29,8 +29,9 @@ curl -X POST https://serpguard.onrender.com/api/v1/checks -d '{"text":"x"}'   # 
 
 > **The free instance sleeps after 15 minutes of inactivity**, so the first request may take up to a
 > minute. An unseen claim then takes 10-20 seconds — it is two Claude calls and a live Google search
-> per claim. Send the same text twice and the second response comes back `cached: true` in a second
-> or two, having made no upstream calls at all.
+> per claim. Send the same text twice and the claims usually come back `cached: true` in a second or
+> two, having made no upstream calls - "usually" because the cache matches claim text, and extraction
+> can word the same claim differently on a re-run.
 
 ---
 
@@ -43,8 +44,8 @@ discrete claims that can actually be checked, runs a real Google search per clai
 and then asks Claude to rule on each claim **against the returned snippets only** — returning
 `verified`, `unconfirmed` or `contradicted` with a one-line reason and a source URL taken from the
 results themselves. The point is that a second model reading its own training data cannot catch a
-stale fact; a live search can. Verdicts are cached per claim, so checking the same claim twice costs
-nothing.
+stale fact; a live search can. Verdicts are cached per claim, so a claim that comes back in the same
+words costs nothing the second time.
 
 ```
 POST /api/v1/checks   { "text": "Rails 8 was released in March 2023." }
@@ -136,9 +137,17 @@ The cache key is a SHA256 of the *normalized* claim text (case, whitespace and a
 collapsed), unique-indexed in MongoDB — not a hash of the submitted document.
 
 Caching whole requests would almost never hit: nobody pastes byte-identical text twice. Claims
-repeat constantly. The same wrong fact about a Rails release date shows up in dozens of different
-paragraphs, and the second paragraph that contains it should cost nothing. A cache hit returns the
-stored verdict with `cached: true` and makes **zero** upstream calls.
+repeat more often, so the same wrong fact about a Rails release date can be paid for once. A cache
+hit returns the stored verdict with `cached: true` and makes **zero** upstream calls.
+
+**How narrow the match really is.** The key is the claim text after normalization, and normalization
+only collapses case, whitespace and a trailing full stop - it does not understand paraphrase. Two
+claims that mean the same thing in different words are two different rows. That bites more than it
+sounds like, because extraction is not deterministic: submitting the *same input twice* can produce
+"ActiveSupport adds an `Enumerable#sum_by` method" one run and "ActiveSupport provides an
+Enumerable/Array method `sum_by`" the next, and those miss each other. Re-running identical text
+often hits, but it is not guaranteed. Making the cache survive rewording needs matching on meaning
+rather than bytes - embeddings, or a canonical form from the extractor - and neither is built.
 
 Normalization is deliberately shallow — it collapses formatting noise, not meaning. Nothing more
 aggressive (stemming, stop-word removal) is safe here, because a false cache hit is not a slow
@@ -259,7 +268,25 @@ curl -X POST http://localhost:3000/api/v1/checks \
 }
 ```
 
-Send the same text again and both claims come back `"cached": true` with no upstream calls at all.
+Send the same text again and both claims come back `"cached": true` with no upstream calls at all
+(when the extraction words them identically - see [Caching](#why-caching-is-per-claim-not-per-request)).
+
+Text with nothing checkable in it is a valid request, not an error. It answers `200`:
+
+```json
+{
+  "checked_at": "2026-09-30T08:14:02Z",
+  "input_summary": { "characters": 39, "claims_extracted": 0, "cached_claims": 0,
+                     "verdicts": { "verified": 0, "unconfirmed": 0, "contradicted": 0 } },
+  "claims": [],
+  "message": "No checkable factual claims found."
+}
+```
+
+Opinions, preferences, predictions and instructions are skipped on purpose, so a paragraph made only
+of those extracts nothing. `message` appears only when `claims` is empty. A reply that could not be
+*read* - not JSON, not a list, truncated, or carrying a claim type that does not exist - is a
+different thing and still returns `500 claim_extraction_failed`.
 
 `max_claims` is optional, clamped to 1–25 — an unseen claim costs two Claude calls and one SerpApi
 search, or three and two when its first query has to be reformulated, so it is a spend limit as much
@@ -293,7 +320,8 @@ Every failure uses one envelope: `{"error": {"code", "message", "request_id"}}`.
 | Bad `max_claims` | 422 | `validation_failed` |
 | Text over 50,000 characters | 413 | `payload_too_large` |
 | Over 30 checks/minute | 429 | `rate_limited` |
-| No checkable claims found | 500 | `claim_extraction_failed` |
+| No checkable claims found | **200** | *not an error* - empty `claims`, plus a `message` |
+| Extraction reply unreadable | 500 | `claim_extraction_failed` |
 | Verdict could not be read | 500 | `verification_failed` |
 | Upstream down after one retry | 500 | `verification_failed` |
 | Our credentials rejected | 500 | `configuration_error` |
@@ -312,9 +340,9 @@ Claims** button, and three preset chips that each exercise a different path:
 
 | Chip | Input | Exercises |
 | ---- | ----- | --------- |
-| `mixed-facts` | One true claim and one subtly wrong date in a single paragraph | Two claims, opposite verdicts, one input |
+| `mixed-facts` | Two true claims about Rails and one plainly false one about the Eiffel Tower | Opposite verdicts from one input |
 | `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_by` | `code_api` claims; the invented one comes back `contradicted`, not merely unsourced |
-| `outdated-stat` | A version and a gem count that were both true once | A `statistic` that live results should now contradict |
+| `outdated-stat` | A Ruby version that was current in 2023 | A claim that live results now contradict |
 
 Results render one card per claim with a verdict badge (green / yellow / red), the reason and a
 clickable source. A status strip shows HTTP status, response time, claims checked, how many came from

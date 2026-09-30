@@ -115,11 +115,14 @@ class ClaimExtractorService
             "Expected a JSON array of claims, got #{parsed.class}."
     end
 
-    if parsed.empty?
-      raise SerpGuard::Errors::ExtractionFailed,
-            "Claude did not find any checkable claims in the supplied text."
-    end
-
+    # An empty array is an ANSWER, not a failure: the prompt tells Claude to
+    # return [] when the text holds nothing checkable, and text made only of
+    # opinions, instructions or predictions is a perfectly valid thing to
+    # submit. Callers get 200 with no claims.
+    #
+    # A reply that could not be read is a different thing entirely and still
+    # raises above: not JSON, not an array, truncated, or an entry that fails
+    # validation below.
     parsed.map { |entry| build_claim(entry) }
   end
 
