@@ -3,270 +3,299 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SerpGuard — fact-check AI output against live search</title>
-<meta name="description" content="A Rails 8 API that extracts factual and technical claims from AI-generated text or code and checks each one against live SerpApi search results. Live demo.">
+<title>SerpGuard — verify AI claims against the live web</title>
+<meta name="description" content="A Rails 8 API that extracts factual and technical claims from AI-generated text or code and checks each one against live Google results via SerpApi.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<!-- One webfont: IBM Plex Mono for code and labels. Body text uses the system
+     sans stack, which costs nothing to load. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
   :root {
-    --bg:#F4F5F7; --surface:#FFF; --surface-2:#EBECF1; --line:#DBDCE4; --line-soft:#E7E8EE;
-    --text:#191A21; --text-mid:#4B4C58; --muted:#6F707E;
-    --accent:#0C6F79; --accent-2:#0A555D; --accent-bg:#E1F0F1;
-    --ok:#1F6B4C; --ok-bg:#E2F0EA;
-    --warn:#8A5B0A; --warn-bg:#F7EDDA;
-    --crit:#A32436; --crit-bg:#F8E7EA;
-    --shadow:0 1px 2px rgba(20,20,32,.05), 0 6px 20px rgba(20,20,32,.05);
-    --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --bg:#F7F8FA; --surface:#FFF; --surface-2:#EDEEF2; --line:#DEDFE6; --line-soft:#E9EAEF;
+    --text:#14151A; --text-mid:#474954; --muted:#656774;
+    --accent:#0B6B75; --accent-2:#08525A; --accent-bg:#DFF0F1;
+    --ok:#1C6749; --ok-bg:#DFEFE8;
+    --warn:#845407; --warn-bg:#F6EBD6;
+    --crit:#A02133; --crit-bg:#F8E5E8;
+    --shadow:0 1px 2px rgba(18,18,28,.05), 0 8px 24px rgba(18,18,28,.05);
     --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --radius:6px;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg:#121218; --surface:#1A1A22; --surface-2:#22222C; --line:#31313E; --line-soft:#282832;
-      --text:#ECECF2; --text-mid:#B8B7C5; --muted:#8F8E9F;
-      --accent:#45B6C1; --accent-2:#6FCFD8; --accent-bg:#13333A;
-      --ok:#62C598; --ok-bg:#153229;
-      --warn:#E0AE55; --warn-bg:#352915;
-      --crit:#F0808F; --crit-bg:#391A21;
-      --shadow:0 1px 2px rgba(0,0,0,.3), 0 6px 22px rgba(0,0,0,.3);
+      --bg:#0C0D11; --surface:#141519; --surface-2:#1C1E24; --line:#2A2C34; --line-soft:#212329;
+      --text:#EDEEF2; --text-mid:#B4B6C0; --muted:#8A8D99;
+      --accent:#4CBECB; --accent-2:#7AD6E0; --accent-bg:#10323A;
+      --ok:#5FC79A; --ok-bg:#123025; --warn:#E0AE55; --warn-bg:#332614; --crit:#F07F8E; --crit-bg:#37181F;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
     }
   }
+
   * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
   body {
-    margin:0; padding:0 20px 80px; background:var(--bg); color:var(--text);
+    margin:0; padding:0 20px 96px; background:var(--bg); color:var(--text);
     font-family:var(--sans); font-size:16px; line-height:1.6;
-    -webkit-font-smoothing:antialiased;
+    -webkit-font-smoothing:antialiased; overflow-x:hidden;
   }
-  .wrap { max-width:860px; margin:0 auto; }
+  .wrap { max-width:880px; margin:0 auto; }
+  a { color:var(--accent-2); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:2px; }
 
-  header { padding:44px 0 28px; }
-  .brandrow { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
-  h1 { font-size:1.75rem; font-weight:700; letter-spacing:-.02em; margin:0; }
-  h1 span { color:var(--accent); }
-  .pill {
-    font-family:var(--mono); font-size:11px; font-weight:500; letter-spacing:.06em;
-    text-transform:uppercase; padding:4px 9px; border-radius:2px;
+  /* ---------- header ---------- */
+  header {
+    display:flex; align-items:center; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; padding:22px 0; border-bottom:1px solid var(--line);
+  }
+  .brand { display:flex; align-items:center; gap:10px; }
+  .wordmark { font-size:1.12rem; font-weight:700; letter-spacing:-.02em; }
+  .wordmark span { color:var(--accent); }
+  .livebadge {
+    font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.09em;
+    text-transform:uppercase; padding:4px 9px; border-radius:100px; cursor:help;
     background:var(--ok-bg); color:var(--ok); display:inline-flex; align-items:center; gap:6px;
+    border:1px solid transparent; text-decoration:none;
   }
-  .pill .dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
-  .lede { font-size:1.06rem; color:var(--text-mid); margin:0 0 18px; max-width:64ch; }
-  .lede b { color:var(--text); font-weight:600; }
-  .links { display:flex; gap:10px; flex-wrap:wrap; }
-  .links a {
-    font-family:var(--mono); font-size:12.5px; text-decoration:none; color:var(--text);
-    background:var(--surface); border:1px solid var(--line); border-radius:2px; padding:7px 12px;
-    transition:border-color .15s,color .15s;
+  .livebadge .dot { width:6px; height:6px; border-radius:50%; background:currentColor; animation:pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  .navlinks { display:flex; gap:6px; flex-wrap:wrap; }
+  .navlinks a {
+    font-family:var(--mono); font-size:12px; text-decoration:none; color:var(--text-mid);
+    padding:6px 10px; border-radius:var(--radius); border:1px solid transparent;
   }
-  .links a:hover, .links a:focus-visible { border-color:var(--accent); color:var(--accent); }
+  .navlinks a:hover { color:var(--text); background:var(--surface-2); }
 
-  /* ---- console ---- */
+  /* ---------- hero ---------- */
+  .hero { padding:52px 0 32px; }
+  h1 {
+    font-size:clamp(1.9rem, 5.2vw, 3rem); line-height:1.1; letter-spacing:-.035em;
+    font-weight:700; margin:0 0 16px; max-width:17ch;
+  }
+  .hero p { font-size:1.08rem; color:var(--text-mid); margin:0; max-width:62ch; }
+  .hero b { color:var(--text); font-weight:600; }
+
+  /* ---------- console ---------- */
   .console {
-    background:var(--surface); border:1px solid var(--line); box-shadow:var(--shadow);
-    padding:22px; margin-bottom:14px;
+    background:var(--surface); border:1px solid var(--line); border-radius:10px;
+    box-shadow:var(--shadow); padding:18px; margin-bottom:16px;
   }
   textarea {
-    /* Wraps rather than scrolling sideways: a pasted paragraph has to be
-       readable in full, and ~7 lines fits the longest preset without scrolling. */
-    width:100%; min-height:184px; resize:vertical; display:block;
-    font-family:var(--mono); font-size:13.5px; line-height:1.65; color:var(--text);
-    background:var(--bg); border:1px solid var(--line); border-radius:2px; padding:12px 14px;
+    width:100%; min-height:158px; resize:vertical; display:block;
+    font-family:var(--mono); font-size:13.5px; line-height:1.7; color:var(--text);
+    background:var(--bg); border:1px solid var(--line); border-radius:var(--radius);
+    padding:13px 15px;
     white-space:pre-wrap; overflow-wrap:break-word; overflow-x:hidden;
   }
-  textarea:focus { outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent; }
-  .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:12px 0 14px; }
-  button {
+  textarea:focus-visible { outline:2px solid var(--accent); outline-offset:-1px; }
+  .metarow {
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap; margin-top:9px;
+  }
+  .counter { font-family:var(--mono); font-size:11.5px; color:var(--muted); }
+  .counter.over { color:var(--crit); font-weight:600; }
+  .linkbtn {
+    font-family:var(--mono); font-size:11.5px; color:var(--muted); background:none;
+    border:none; padding:4px 6px; cursor:pointer; border-radius:4px;
+  }
+  .linkbtn:hover { color:var(--text); background:var(--surface-2); }
+
+  .actions { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:14px 0 16px; }
+  .primary {
     font-family:var(--sans); font-size:.95rem; font-weight:600; cursor:pointer;
-    background:var(--accent); color:#fff; border:none; border-radius:2px; padding:12px 22px;
-    transition:background .15s;
+    background:var(--accent); color:#04232A; border:none; border-radius:var(--radius);
+    padding:11px 20px;
   }
-  /* `:not(.chip)` matters: without it this rule outranks `.chip` on specificity
-     and paints the preset chip labels near-black on a near-black chip. */
-  :root:not([data-theme="light"]) button:not(.chip) { color:#0A2226; }
-  @media (prefers-color-scheme: light) { button:not(.chip) { color:#fff; } }
-  button:not(.chip):hover { background:var(--accent-2); }
-  button[disabled] { opacity:.55; cursor:not-allowed; }
-  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  .kbd {
-    font-family:var(--mono); font-size:11.5px; color:var(--muted);
-  }
-  .kbd b { color:var(--text-mid); font-weight:500; }
+  @media (prefers-color-scheme: light) { .primary { color:#fff; } }
+  :root[data-theme="light"] .primary { color:#fff; }
+  .primary:hover { background:var(--accent-2); }
+  .primary[disabled] { opacity:.5; cursor:not-allowed; }
+  .kbd { font-family:var(--mono); font-size:11.5px; color:var(--muted); }
+  .kbd b { color:var(--text-mid); font-weight:600; }
 
   .presets { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .presets .label {
-    font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase;
+    font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
     color:var(--muted); margin-right:2px;
   }
-  /* The preset name carries full text colour; the description sits back a tone.
-     Selected state changes background AND border, not just colour. */
+  /* Scoped away from .primary so no generic button colour can wash out the
+     chip label - that bug made these unreadable once already. */
   .chip {
-    font-family:var(--mono); font-size:12px; cursor:pointer; color:var(--text);
-    background:var(--surface-2); border:1px solid var(--line); border-radius:2px;
-    padding:6px 11px; font-weight:500; line-height:1.45;
+    font-family:var(--mono); font-size:12px; cursor:pointer; line-height:1.45;
+    color:var(--text); background:var(--surface-2); border:1px solid var(--line);
+    border-radius:100px; padding:6px 13px; font-weight:500;
   }
   .chip b { color:var(--muted); font-weight:400; }
-  .chip:hover { color:var(--accent); border-color:var(--accent); }
-  .chip:hover b { color:var(--text-mid); }
+  .chip:hover { border-color:var(--accent); color:var(--accent); }
   .chip[aria-pressed="true"] {
     background:var(--accent-bg); border-color:var(--accent); color:var(--accent-2); font-weight:600;
   }
   .chip[aria-pressed="true"] b { color:var(--accent-2); font-weight:400; }
 
-  /* ---- status strip ---- */
-  .meta { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
-  .badge {
-    font-family:var(--mono); font-size:11.5px; padding:5px 10px; border-radius:2px;
-    background:var(--surface-2); color:var(--text-mid);
-  }
-  .badge.hit  { background:var(--ok-bg); color:var(--ok); font-weight:500; }
-  .badge.miss { background:var(--accent-bg); color:var(--accent-2); font-weight:500; }
-  .badge.code { font-weight:600; }
-  .badge.c2 { background:var(--ok-bg); color:var(--ok); }
-  .badge.c4 { background:var(--warn-bg); color:var(--warn); }
-  .badge.c5 { background:var(--crit-bg); color:var(--crit); }
-
-  /* ---- claim cards ---- */
-  .claim {
-    background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--line);
-    padding:15px 18px; margin-bottom:10px;
-  }
-  .claim.verified     { border-left-color:var(--ok); }
-  .claim.unconfirmed  { border-left-color:var(--warn); }
-  .claim.contradicted { border-left-color:var(--crit); }
-  .claimhead { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:9px; }
-  .verdict {
-    font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.07em;
-    text-transform:uppercase; padding:4px 9px; border-radius:2px;
-    display:inline-flex; align-items:center; gap:6px;
-  }
-  .verdict .dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
-  .verdict.verified     { background:var(--ok-bg);   color:var(--ok); }
-  .verdict.unconfirmed  { background:var(--warn-bg); color:var(--warn); }
-  .verdict.contradicted { background:var(--crit-bg); color:var(--crit); }
-  .ctype {
-    font-family:var(--mono); font-size:11px; color:var(--muted);
-    background:var(--surface-2); border-radius:2px; padding:4px 8px;
-  }
-  .claim h3 { font-size:1.02rem; font-weight:600; margin:0 0 6px; line-height:1.45; overflow-wrap:break-word; }
-  .claim .reason { margin:0 0 8px; font-size:.93rem; color:var(--text-mid); overflow-wrap:break-word; }
-  /* The source reads as a domain, not a 300-character tracking URL. */
-  .claim .src { font-family:var(--mono); font-size:12px; overflow-wrap:break-word; }
-  .claim .src a { color:var(--accent-2); text-decoration:none; }
-  .claim .src a:hover, .claim .src a:focus-visible { text-decoration:underline; }
-  .claim .src.none { color:var(--muted); }
-  .tag {
-    font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
-    padding:3px 7px; border-radius:2px; background:var(--surface-2); color:var(--text-mid);
-  }
-  .tag.cached { background:var(--ok-bg); color:var(--ok); font-weight:600; }
-
-  /* one-line tally above the cards */
-  .summary {
-    font-size:.95rem; color:var(--text); margin:0 0 12px; font-weight:500;
-    display:flex; gap:8px; flex-wrap:wrap; align-items:baseline;
-  }
-  .summary .sep { color:var(--muted); font-weight:400; }
-  .summary .v-verified { color:var(--ok); font-weight:600; }
-  .summary .v-contradicted { color:var(--crit); font-weight:600; }
-  .summary .v-unconfirmed { color:var(--warn); font-weight:600; }
-  .summary .took { color:var(--muted); font-family:var(--mono); font-size:12px; font-weight:400; }
-
-  /* ---- progress panel ---- */
-  .progress { background:var(--surface); border:1px solid var(--line); padding:18px 18px 14px; margin-bottom:12px; }
-  .pstep {
-    display:flex; align-items:flex-start; gap:10px; padding:7px 0;
-    font-size:.95rem; color:var(--muted);
-  }
+  /* ---------- progress ---------- */
+  .progress { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:20px; }
+  .pstep { display:flex; align-items:flex-start; gap:11px; padding:7px 0; font-size:.95rem; color:var(--muted); }
   .pdot {
-    width:15px; height:15px; border-radius:50%; border:2px solid var(--line);
-    flex:none; margin-top:.2em; display:inline-flex; align-items:center;
-    justify-content:center; font-size:9px; line-height:1; font-weight:700;
+    width:16px; height:16px; border-radius:50%; border:2px solid var(--line); flex:none;
+    margin-top:.18em; display:inline-flex; align-items:center; justify-content:center;
+    font-size:9px; line-height:1; font-weight:700;
   }
   .pstep.active { color:var(--text); font-weight:500; }
-  .pstep.active .pdot { border-color:var(--accent); animation:pulse 1.1s ease-in-out infinite; }
+  .pstep.active .pdot { border-color:var(--accent); animation:pulse 1.2s ease-in-out infinite; }
   .pstep.done { color:var(--text-mid); }
   .pstep.done .pdot { border-color:var(--ok); background:var(--ok); color:var(--bg); }
-  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.3 } }
   .pfoot {
-    margin-top:12px; padding-top:11px; border-top:1px solid var(--line-soft);
+    margin-top:14px; padding-top:12px; border-top:1px solid var(--line-soft);
     font-family:var(--mono); font-size:11.5px; color:var(--muted);
     display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
   }
   .pfoot b { color:var(--text-mid); font-weight:600; }
 
-  .notice { padding:18px; border-radius:2px; margin-bottom:12px; }
-  .notice h3 { margin:0 0 6px; font-size:1.02rem; }
-  .notice p { margin:0; font-size:.95rem; }
+  /* ---------- results ---------- */
+  .tiles { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+  .tile {
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+    padding:9px 13px; min-width:84px;
+  }
+  .tile .n { font-size:1.15rem; font-weight:700; line-height:1.2; display:block; }
+  .tile .k {
+    font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted);
+  }
+  .tile.verified .n { color:var(--ok); }
+  .tile.unconfirmed .n { color:var(--warn); }
+  .tile.contradicted .n { color:var(--crit); }
+
+  .claim {
+    background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--line);
+    border-radius:var(--radius); padding:16px 18px; margin-bottom:10px;
+  }
+  .claim.verified { border-left-color:var(--ok); }
+  .claim.unconfirmed { border-left-color:var(--warn); }
+  .claim.contradicted { border-left-color:var(--crit); }
+  .claimhead { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  .verdict {
+    font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.08em;
+    text-transform:uppercase; padding:4px 10px; border-radius:100px;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  .verdict .dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex:none; }
+  .verdict.verified { background:var(--ok-bg); color:var(--ok); }
+  .verdict.unconfirmed { background:var(--warn-bg); color:var(--warn); }
+  .verdict.contradicted { background:var(--crit-bg); color:var(--crit); }
+  .tag {
+    font-family:var(--mono); font-size:10px; letter-spacing:.07em; text-transform:uppercase;
+    padding:3px 8px; border-radius:100px; background:var(--surface-2); color:var(--muted);
+  }
+  .tag.cached { background:var(--ok-bg); color:var(--ok); font-weight:600; }
+  .claim h3 { font-size:1.02rem; font-weight:600; margin:0 0 7px; line-height:1.45; overflow-wrap:break-word; }
+  .claim .reason { margin:0 0 10px; font-size:.93rem; color:var(--text-mid); overflow-wrap:break-word; }
+  .claim .src { font-family:var(--mono); font-size:12px; overflow-wrap:break-word; }
+  .claim .src a { color:var(--accent-2); text-decoration:none; }
+  .claim .src a:hover, .claim .src a:focus-visible { text-decoration:underline; }
+  .claim .src.none { color:var(--muted); }
+
+  .notice { padding:18px; border-radius:var(--radius); margin-bottom:12px; border:1px solid transparent; }
+  .notice h3 { margin:0 0 7px; font-size:1.02rem; }
+  .notice p { margin:0; font-size:.94rem; }
   .notice p + p { margin-top:8px; }
   .notice.good { background:var(--ok-bg); color:var(--ok); }
   .notice.warn { background:var(--warn-bg); color:var(--warn); }
-  .notice.bad  { background:var(--crit-bg); color:var(--crit); }
-  .notice code { background:rgba(127,127,127,.18); padding:1px 5px; border-radius:2px; font-family:var(--mono); font-size:.85em; }
-
-  .hint {
-    font-size:.9rem; color:var(--muted); margin:12px 0 0;
-    padding-left:12px; border-left:2px solid var(--line);
-  }
+  .notice.bad { background:var(--crit-bg); color:var(--crit); }
+  .notice code { background:rgba(127,127,127,.2); padding:1px 5px; border-radius:3px; font-family:var(--mono); font-size:.85em; }
+  .hint { font-size:.9rem; color:var(--muted); margin:12px 0 0; padding-left:12px; border-left:2px solid var(--line); }
   .hint code { font-family:var(--mono); font-size:.85em; }
 
   details { margin-top:14px; }
   summary {
     font-family:var(--mono); font-size:12px; color:var(--muted); cursor:pointer;
-    padding:6px 0; user-select:none;
+    padding:7px 0; -webkit-user-select:none; user-select:none;
   }
   summary:hover { color:var(--accent); }
   pre {
-    font-family:var(--mono); font-size:12.5px; line-height:1.55; margin:8px 0 0;
+    font-family:var(--mono); font-size:12.5px; line-height:1.6; margin:8px 0 0;
     background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--accent);
-    padding:14px; overflow-x:auto; color:var(--text-mid);
+    border-radius:var(--radius); padding:15px; overflow-x:auto; color:var(--text-mid);
   }
 
-  /* ---- lower sections ---- */
-  section { margin-top:44px; }
-  h2 { font-size:1.2rem; font-weight:700; letter-spacing:-.015em; margin:0 0 4px; }
+  /* ---------- sections ---------- */
+  section { margin-top:56px; }
+  h2 { font-size:1.28rem; font-weight:700; letter-spacing:-.02em; margin:0 0 6px; }
   .sub {
-    font-family:var(--mono); font-size:11.5px; letter-spacing:.05em; text-transform:uppercase;
-    color:var(--muted); margin:0 0 18px; padding-bottom:12px; border-bottom:1px solid var(--line);
+    font-family:var(--mono); font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 20px; padding-bottom:13px; border-bottom:1px solid var(--line);
   }
-  /* Grid rows stretch, so cards on a row share a height. No fixed heights and
-     no clipping anywhere: a card is as tall as its text needs. */
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(248px,1fr)); gap:14px; align-items:stretch; }
-  .card {
-    background:var(--surface); border:1px solid var(--line); padding:18px;
-    min-width:0; height:auto; overflow:visible;
-  }
-  /* Seven cards would strand the last one alone on its row, so it spans the
-     full width instead of sitting in a gap. */
-  .cards > .card:last-child { grid-column:1 / -1; }
-  .card h3 {
-    margin:0 0 7px; font-size:.98rem; font-weight:600;
-    display:flex; align-items:flex-start; gap:8px; overflow-wrap:break-word; min-width:0;
-  }
-  .card h3::before { content:""; width:6px; height:6px; background:var(--accent); flex:none; margin-top:.45em; }
-  .card p { margin:0; font-size:.9rem; color:var(--text-mid); overflow-wrap:break-word; }
-  .card code { font-family:var(--mono); font-size:.85em; background:rgba(127,127,127,.14); padding:1px 5px; border-radius:2px; }
 
-  .scroll { overflow-x:auto; }
-  table { border-collapse:collapse; width:100%; font-size:.9rem; }
-  th, td { text-align:left; padding:8px 14px 8px 0; border-bottom:1px solid var(--line-soft); vertical-align:top; }
-  th { font-family:var(--mono); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase;
-       color:var(--muted); border-bottom-color:var(--line); white-space:nowrap; font-weight:500; }
-  td:first-child, td:nth-child(2) { font-family:var(--mono); font-size:.83rem; white-space:nowrap; }
-  td code { font-family:var(--mono); font-size:.85em; }
-  .s2 { color:var(--ok); font-weight:600; }
-  .s4 { color:var(--warn); font-weight:600; }
-  .s5 { color:var(--crit); font-weight:600; }
+  /* pipeline */
+  .pipeline { display:flex; align-items:stretch; gap:8px; flex-wrap:wrap; margin-bottom:22px; }
+  .pnode {
+    flex:1 1 130px; min-width:0; background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--radius); padding:12px 13px;
+  }
+  .pnode .i {
+    font-family:var(--mono); font-size:10px; color:var(--accent); letter-spacing:.09em; display:block; margin-bottom:3px;
+  }
+  .pnode .t { font-size:.92rem; font-weight:600; display:block; line-height:1.3; }
+  .pnode .d { font-family:var(--mono); font-size:10.5px; color:var(--muted); display:block; margin-top:4px; }
+  .parrow { align-self:center; color:var(--muted); font-size:14px; flex:none; }
+  @media (max-width:640px) { .parrow { display:none; } .pnode { flex:1 1 100%; } }
+
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(252px,1fr)); gap:12px; align-items:stretch; }
+  .card {
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+    padding:17px; min-width:0; height:auto; overflow:visible;
+  }
+  /* Seven cards would strand the last one alone on its row. */
+  .cards > .card:last-child { grid-column:1 / -1; }
+  .card h3 { margin:0 0 6px; font-size:.96rem; font-weight:600; line-height:1.35; overflow-wrap:break-word; }
+  .card p { margin:0; font-size:.9rem; color:var(--text-mid); overflow-wrap:break-word; }
+  .card .detail {
+    display:block; margin-top:9px; padding-top:9px; border-top:1px solid var(--line-soft);
+    font-family:var(--mono); font-size:11px; color:var(--muted); line-height:1.55;
+  }
+  .card code { font-family:var(--mono); font-size:.85em; background:rgba(127,127,127,.16); padding:1px 5px; border-radius:3px; }
+
+  /* api */
+  .endpoints { display:flex; flex-direction:column; gap:6px; margin-bottom:20px; }
+  .ep {
+    display:flex; align-items:center; gap:11px; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:10px 13px;
+    font-family:var(--mono); font-size:12.5px;
+  }
+  .ep .m {
+    font-weight:600; font-size:10.5px; letter-spacing:.06em; padding:3px 8px; border-radius:3px;
+    background:var(--surface-2); color:var(--text-mid); min-width:48px; text-align:center;
+  }
+  .ep .m.post { background:var(--accent-bg); color:var(--accent-2); }
+  .ep .p { color:var(--text); font-weight:500; }
+  .ep .s { margin-left:auto; color:var(--muted); font-size:11.5px; }
+  .ep .lock { font-size:11px; color:var(--warn); }
+
+  .codeblock { position:relative; }
+  .codeblock pre { margin:0; }
+  .copy {
+    position:absolute; top:9px; right:9px; font-family:var(--mono); font-size:11px;
+    background:var(--surface-2); color:var(--text-mid); border:1px solid var(--line);
+    border-radius:4px; padding:5px 10px; cursor:pointer;
+  }
+  .copy:hover { color:var(--text); border-color:var(--accent); }
+  .authline { font-size:.92rem; color:var(--text-mid); margin:0 0 14px; }
+  .authline code { font-family:var(--mono); font-size:.86em; background:var(--surface-2); padding:2px 7px; border-radius:3px; color:var(--text); }
 
   footer {
-    margin-top:52px; padding-top:20px; border-top:1px solid var(--line);
+    margin-top:64px; padding-top:22px; border-top:1px solid var(--line);
     font-family:var(--mono); font-size:11.5px; color:var(--muted);
     display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap;
   }
-  footer a { color:var(--accent-2); }
 
   @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
   @media (max-width:560px) {
+    .hero { padding:36px 0 26px; }
     .actions { flex-direction:column; align-items:stretch; }
-    button { width:100%; }
+    .primary { width:100%; }
+    .kbd { text-align:center; }
+    .ep .s { margin-left:0; width:100%; }
   }
 </style>
 </head>
@@ -274,29 +303,36 @@
 <div class="wrap">
 
   <header>
-    <div class="brandrow">
-      <h1>Serp<span>Guard</span></h1>
-      <span class="pill"><span class="dot"></span>API live</span>
+    <div class="brand">
+      <span class="wordmark">Serp<span>Guard</span></span>
+      <a class="livebadge" href="/api/v1/health"
+         title="Reflects GET /api/v1/health only — process liveness, not upstream status">
+        <span class="dot" aria-hidden="true"></span>API live</a>
     </div>
-    <p class="lede">
-      A <b>Ruby on Rails</b> API that pulls the checkable claims out of AI-generated text or code
-      and rules on each one against <b>live Google results</b> — claims extracted by Claude,
-      evidence from SerpApi, verdicts cached in MongoDB. Paste something below; it calls the same
-      public endpoint any client would.
-    </p>
-    <div class="links">
-      <a href="https://github.com/Divyanshu-2907/SerpGuard">Source on GitHub</a>
-      <a href="https://github.com/Divyanshu-2907/SerpGuard#readme">README &amp; engineering notes</a>
-      <a href="/api/v1">Service JSON</a>
+    <nav class="navlinks">
+      <a href="https://github.com/Divyanshu-2907/SerpGuard">GitHub</a>
+      <a href="https://github.com/Divyanshu-2907/SerpGuard#readme">README</a>
       <a href="/api/v1/health">Health</a>
-    </div>
+    </nav>
   </header>
+
+  <div class="hero">
+    <h1>Verify AI claims against the live web.</h1>
+    <p>
+      <b>Claude</b> extracts the checkable claims from your text or code, <b>SerpApi</b> fetches
+      live Google results for each one, and each claim comes back with a verdict and a source.
+    </p>
+  </div>
 
   <div class="console">
     <form id="f">
-      <textarea id="t" spellcheck="false" aria-label="Text or code to check"></textarea>
+      <textarea id="t" spellcheck="false" aria-label="Text or code to verify"></textarea>
+      <div class="metarow">
+        <span class="counter" id="count">0 / 50,000</span>
+        <button type="button" class="linkbtn" id="clear">Clear</button>
+      </div>
       <div class="actions">
-        <button type="submit" id="go">Check Claims</button>
+        <button type="submit" class="primary" id="go">Verify Claims</button>
         <span class="kbd"><b>⌘/Ctrl + Enter</b> to submit</span>
       </div>
     </form>
@@ -311,64 +347,88 @@
   <div id="out" aria-live="polite"></div>
 
   <section>
-    <h2>What you just called</h2>
-    <p class="sub">One POST, three upstream calls per unseen claim - five if a query misses</p>
+    <h2>How it works</h2>
+    <p class="sub">One POST · three upstream calls per unseen claim</p>
+
+    <div class="pipeline">
+      <div class="pnode"><span class="i">01</span><span class="t">Extract</span><span class="d">Claude → claims</span></div>
+      <span class="parrow" aria-hidden="true">→</span>
+      <div class="pnode"><span class="i">02</span><span class="t">Search</span><span class="d">SerpApi → Google</span></div>
+      <span class="parrow" aria-hidden="true">→</span>
+      <div class="pnode"><span class="i">03</span><span class="t">Rank sources</span><span class="d">authority tiers</span></div>
+      <span class="parrow" aria-hidden="true">→</span>
+      <div class="pnode"><span class="i">04</span><span class="t">Judge</span><span class="d">Claude → verdict</span></div>
+      <span class="parrow" aria-hidden="true">→</span>
+      <div class="pnode"><span class="i">05</span><span class="t">Cache</span><span class="d">MongoDB</span></div>
+    </div>
+
     <div class="cards">
       <div class="card">
         <h3>Claims, not vibes</h3>
-        <p>Claude splits the input into discrete claims and restates each so it stands alone as a search query — resolving pronouns, keeping version numbers and figures exactly as written. Correcting them would defeat the point.</p>
+        <p>Claude splits the text into discrete claims and restates each one so it stands alone as a search query.</p>
+        <span class="detail">Typed <code>fact</code>, <code>code_api</code> or <code>statistic</code>. Versions and figures are copied verbatim — correcting them would defeat the point.</span>
       </div>
       <div class="card">
         <h3>Judged on sources only</h3>
-        <p>The verdict prompt is told to rule against the returned snippets and <em>not</em> from the model's own knowledge. Otherwise a fact-checker just launders its own priors back as a verdict.</p>
+        <p>The verdict prompt rules against the returned snippets, not the model's own knowledge.</p>
+        <span class="detail">A model checking a model agrees when both are wrong. The live search is the source of truth; Claude is the reader.</span>
       </div>
       <div class="card">
         <h3>Unreadable ≠ unconfirmed</h3>
-        <p><code>unconfirmed</code> is a real finding: the evidence was thin. A verdict that could not be parsed raises <code>verification_failed</code> instead. There is no code path that quietly turns one into the other.</p>
+        <p><code>unconfirmed</code> means the evidence was thin. A reply that could not be parsed is an error instead.</p>
+        <span class="detail">Raises <code>verification_failed</code> (500). No code path turns an unreadable answer into a verdict.</span>
       </div>
       <div class="card">
         <h3>Cited or dropped</h3>
-        <p>A source URL is kept only if it is one we actually handed to the model. An invented link is dropped and logged rather than passed on as a citation — the verdict still stands on the snippets.</p>
-      </div>
-      <div class="card">
-        <h3>Verdicts are cached</h3>
-        <p>Each claim is keyed by a SHA256 of its normalized text, unique-indexed in MongoDB. Check the same claim twice and the second answer comes back <code>cached: true</code> with zero upstream calls.</p>
+        <p>A source URL is kept only if it matches a result we actually sent to the model.</p>
+        <span class="detail">An invented link is dropped and logged rather than shown. The verdict still stands on the snippets.</span>
       </div>
       <div class="card">
         <h3>A method that isn't there</h3>
-        <p>For a <code>code_api</code> claim whose method name appears in <em>no</em> result, the verdict is <code>contradicted</code>, not <code>unconfirmed</code>. A real method name returns something for a search of its own name — an ordinary fact has no such guarantee, which is why the rule stops at code.</p>
+        <p>For a <code>code_api</code> claim whose method name appears in no result, the verdict is <code>contradicted</code>.</p>
+        <span class="detail">A real method name returns something for a search of its own name. Never fires on zero results — that means the query failed.</span>
+      </div>
+      <div class="card">
+        <h3>Verdicts are cached</h3>
+        <p>Each claim is keyed by a SHA256 of its normalized text, unique-indexed in MongoDB.</p>
+        <span class="detail">A hit returns <code>cached: true</code> with zero upstream calls. Normalization collapses case and spacing, not paraphrase.</span>
       </div>
       <div class="card">
         <h3>Retries, once</h3>
-        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A query whose results come back about a different subject also gets one rewrite — and only then. A 4xx that cannot succeed on a second identical attempt is never sent twice.</p>
+        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A query whose results come back about a different subject gets one rewrite — and only then.</p>
+        <span class="detail">A 4xx that cannot succeed on a second identical attempt is never sent twice. 5s connect / 30s read; <code>Retry-After</code> honoured but capped at 2s.</span>
       </div>
     </div>
   </section>
 
   <section>
-    <h2>API surface</h2>
-    <p class="sub">Every failure uses one error envelope</p>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>Request</th><th>Status</th><th>Response</th></tr></thead>
-        <tbody>
-          <tr><td>POST /api/v1/checks</td><td class="s2">200</td><td>Per-claim verdicts, each with <code>cached</code> and <code>source_url</code></td></tr>
-          <tr><td>…repeat claim</td><td class="s2">200</td><td><code>cached: true</code> — served from MongoDB, no API calls</td></tr>
-          <tr><td>GET /api/v1/health</td><td class="s2">200</td><td>Liveness. Touches no dependency, so it never flaps</td></tr>
-          <tr><td>missing <code>text</code></td><td class="s4">400</td><td><code>parameter_missing</code></td></tr>
-          <tr><td>unparsable body</td><td class="s4">400</td><td><code>malformed_json</code></td></tr>
-          <tr><td>bad / missing key</td><td class="s4">401</td><td><code>api_key_missing</code> · <code>api_key_invalid</code></td></tr>
-          <tr><td>bad <code>max_claims</code></td><td class="s4">422</td><td><code>validation_failed</code></td></tr>
-          <tr><td>text over 50k chars</td><td class="s4">413</td><td><code>payload_too_large</code></td></tr>
-          <tr><td>31st check / minute</td><td class="s5">429</td><td><code>rate_limited</code> + <code>Retry-After</code></td></tr>
-          <tr><td>unreadable verdict</td><td class="s5">500</td><td><code>verification_failed</code> — never a silent <code>unconfirmed</code></td></tr>
-        </tbody>
-      </table>
+    <h2>API</h2>
+    <p class="sub">One JSON error envelope for every failure</p>
+
+    <div class="endpoints">
+      <div class="ep"><span class="m post">POST</span><span class="p">/api/v1/checks</span><span class="lock">key</span><span class="s">200 · 400 · 401 · 413 · 422 · 429 · 500</span></div>
+      <div class="ep"><span class="m">GET</span><span class="p">/api/v1/health</span><span class="s">200 · liveness, no key</span></div>
+      <div class="ep"><span class="m">GET</span><span class="p">/api/v1</span><span class="s">200 · service description</span></div>
+      <div class="ep"><span class="m">GET</span><span class="p">/</span><span class="s">200 · this page</span></div>
     </div>
-    <p class="hint">
+
+    <p class="authline">
       Authenticate with an <code>X-API-Key</code> header. This page uses the public key
       <code>demo-key</code>, rate limited to 30 checks per minute.
     </p>
+
+    <div class="codeblock">
+      <button type="button" class="copy" id="copy">Copy</button>
+      <pre id="curl">curl -X POST https://serpguard.onrender.com/api/v1/checks \
+  -H 'content-type: application/json' \
+  -H 'X-API-Key: demo-key' \
+  -d '{"text":"The Eiffel Tower is located in London."}'</pre>
+    </div>
+
+    <details>
+      <summary>▸ Sample response — captured from the live API</summary>
+      <pre id="sample"></pre>
+    </details>
   </section>
 
   <footer>
@@ -383,17 +443,20 @@
   "use strict";
 
   var API_KEY = "demo-key";
+  var MAX_CHARS = 50000;       // ClaimExtractorService::MAX_TEXT_LENGTH
   var COLD_START_MS = 2500;
 
   var out = document.getElementById("out");
   var form = document.getElementById("f");
   var input = document.getElementById("t");
   var go = document.getElementById("go");
+  var counter = document.getElementById("count");
+  var clearBtn = document.getElementById("clear");
+  var copyBtn = document.getElementById("copy");
   var chips = document.querySelectorAll(".chip");
 
-  // Each preset exercises a different path through the pipeline. The labels
-  // describe the INPUT, not the expected verdict - the verdict comes from
-  // whatever Google actually returns at the moment you press the button.
+  // Each preset exercises a different path. The labels describe the INPUT —
+  // the verdict comes from whatever Google returns at the moment you press it.
   var PRESETS = {
     "mixed-facts":
       "Ruby on Rails was created by David Heinemeier Hansson in 2004. The Eiffel Tower is " +
@@ -412,102 +475,129 @@
       "Ruby's current stable release is 3.1.4."
   };
 
+  // A real response from https://serpguard.onrender.com/api/v1/checks for the
+  // mixed-facts preset, captured 2026-09-30. Nothing here is illustrative.
+  var SAMPLE = {
+    checked_at: "2026-09-30T09:18:20Z",
+    input_summary: {
+      characters: 101,
+      claims_extracted: 3,
+      cached_claims: 3,
+      verdicts: { verified: 2, unconfirmed: 0, contradicted: 1 }
+    },
+    claims: [
+      {
+        claim: "Ruby on Rails was created by David Heinemeier Hansson",
+        type: "fact",
+        verdict: "verified",
+        reason: "Multiple sources, including DHH's own site, state he created Ruby on Rails.",
+        source_url: "https://world.hey.com/dhh",
+        cached: true,
+        checked_at: "2026-09-30T08:02:45Z"
+      },
+      {
+        claim: "Ruby on Rails was created in 2004",
+        type: "statistic",
+        verdict: "verified",
+        reason: "Multiple sources state Rails was extracted/launched by DHH in 2004.",
+        source_url: "https://blog.codeminer42.com/a-journey-through-the-greatest-ruby-on-rails-milestones/",
+        cached: true,
+        checked_at: "2026-09-28T06:10:53Z"
+      },
+      {
+        claim: "The Eiffel Tower is located in London",
+        type: "fact",
+        verdict: "contradicted",
+        reason: "Sources state the Eiffel Tower is in Paris, on the Champ-de-Mars, not London.",
+        source_url: "https://wikitravel.org/en/Eiffel_Tower",
+        cached: true,
+        checked_at: "2026-09-25T08:35:40Z"
+      }
+    ]
+  };
+
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
 
-  function codeClass(status) {
-    return status < 300 ? "c2" : status < 500 ? "c4" : "c5";
-  }
-
   function verdictClass(verdict) {
     return verdict === "verified" || verdict === "unconfirmed" || verdict === "contradicted"
-      ? verdict
-      : "unconfirmed";
+      ? verdict : "unconfirmed";
+  }
+
+  // "https://en.wikipedia.org/wiki/x?y=1" -> "en.wikipedia.org"
+  function domainOf(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ""); }
+    catch (e) { return String(url); }
   }
 
   function rawBlock(data) {
-    return '<details><summary>▸ Raw JSON response</summary><pre>' +
+    return "<details><summary>▸ Raw JSON response</summary><pre>" +
       esc(JSON.stringify(data, null, 2)) + "</pre></details>";
   }
 
-  function statusStrip(status, data, ms) {
-    var badges = '<span class="badge code ' + codeClass(status) + '">HTTP ' + status + "</span>";
-    badges += '<span class="badge">' + Math.round(ms) + " ms</span>";
-
-    var summary = data && data.input_summary;
-    if (summary) {
-      var total = summary.claims_extracted;
-      var cached = summary.cached_claims;
-      badges += '<span class="badge">' + total + (total === 1 ? " claim" : " claims") + " checked</span>";
-      badges += cached > 0
-        ? '<span class="badge hit">' + cached + " from cache</span>"
-        : '<span class="badge miss">0 from cache</span>';
-
-      var tally = summary.verdicts || {};
-      ["verified", "unconfirmed", "contradicted"].forEach(function (verdict) {
-        if (tally[verdict]) {
-          badges += '<span class="badge ' + (verdict === "verified" ? "c2" : verdict === "unconfirmed" ? "c4" : "c5") +
-            '">' + tally[verdict] + " " + verdict + "</span>";
-        }
-      });
-    }
-
-    return '<div class="meta">' + badges + "</div>";
+  function updateCounter() {
+    var n = input.value.length;
+    counter.textContent = n.toLocaleString("en-US") + " / 50,000";
+    counter.className = n > MAX_CHARS ? "counter over" : "counter";
   }
 
-  // "https://en.wikipedia.org/wiki/x?y=1" -> "en.wikipedia.org". Falls back to
-  // the raw string if it will not parse, so a source is never lost to a typo.
-  function domainOf(url) {
-    try {
-      return new URL(url).hostname.replace(/^www\./, "");
-    } catch (e) {
-      return String(url);
+  // ---- results ------------------------------------------------------------
+
+  function tiles(data, ms) {
+    var summary = data.input_summary || {};
+    var tally = summary.verdicts || {};
+    var html = '<div class="tiles">';
+
+    html += '<div class="tile"><span class="n">' + (summary.claims_extracted || 0) +
+      '</span><span class="k">claims</span></div>';
+
+    [ "verified", "unconfirmed", "contradicted" ].forEach(function (verdict) {
+      html += '<div class="tile ' + verdict + '"><span class="n">' + (tally[verdict] || 0) +
+        '</span><span class="k">' + verdict + "</span></div>";
+    });
+
+    if (summary.cached_claims) {
+      html += '<div class="tile"><span class="n">' + summary.cached_claims +
+        '</span><span class="k">cached</span></div>';
     }
+
+    html += '<div class="tile"><span class="n">' + (ms / 1000).toFixed(1) +
+      's</span><span class="k">elapsed</span></div>';
+
+    return html + "</div>";
+  }
+
+  function sourceLine(claim) {
+    if (claim.source_url) {
+      return '<div class="src"><a href=' + JSON.stringify(claim.source_url) +
+        ' target="_blank" rel="noopener noreferrer" title=' + JSON.stringify(claim.source_url) +
+        ">" + esc(domainOf(claim.source_url)) + " ↗</a></div>";
+    }
+    // A code_api claim ruled contradicted has no source by definition: the
+    // verdict comes from the name being absent from every result.
+    if (claim.type === "code_api" && claim.verdict === "contradicted") {
+      return '<div class="src none">no source (method not found in any result)</div>';
+    }
+    return '<div class="src none">no source (no single result carried this verdict)</div>';
   }
 
   function claimCard(claim) {
     var verdict = verdictClass(claim.verdict);
     var html = '<div class="claim ' + verdict + '">';
 
-    // Verdict first, and spelled out — never colour alone.
     html += '<div class="claimhead">';
-    html += '<span class="verdict ' + verdict + '"><span class="dot"></span>' + esc(claim.verdict) + "</span>";
-    if (claim.type) html += '<span class="ctype">' + esc(claim.type) + "</span>";
+    html += '<span class="verdict ' + verdict + '"><span class="dot" aria-hidden="true"></span>' +
+      esc(claim.verdict) + "</span>";
+    if (claim.type) html += '<span class="tag">' + esc(claim.type) + "</span>";
     if (claim.cached) html += '<span class="tag cached">cached</span>';
     html += "</div>";
 
     html += "<h3>" + esc(claim.claim) + "</h3>";
     html += '<p class="reason">' + esc(claim.reason) + "</p>";
-
-    html += claim.source_url
-      ? '<div class="src"><a href=' + JSON.stringify(claim.source_url) +
-        ' target="_blank" rel="noopener noreferrer" title=' + JSON.stringify(claim.source_url) + ">" +
-        esc(domainOf(claim.source_url)) + " ↗</a></div>"
-      : '<div class="src none">No single result carried this verdict.</div>';
-
-    return html + "</div>";
-  }
-
-  // "3 claims · 2 verified · 1 contradicted · 8.3s"
-  function summaryLine(data, ms) {
-    var claims = data.claims || [];
-    var tally = (data.input_summary || {}).verdicts || {};
-    var parts = [ claims.length + (claims.length === 1 ? " claim" : " claims") ];
-
-    [ "verified", "contradicted", "unconfirmed" ].forEach(function (verdict) {
-      if (tally[verdict]) {
-        parts.push('<span class="v-' + verdict + '">' + tally[verdict] + " " + verdict + "</span>");
-      }
-    });
-
-    var cached = (data.input_summary || {}).cached_claims || 0;
-    if (cached) parts.push(cached + " cached");
-
-    return '<p class="summary">' + parts.join(' <span class="sep">·</span> ') +
-      ' <span class="sep">·</span> <span class="took">' + (ms / 1000).toFixed(1) + "s</span></p>";
+    return html + sourceLine(claim) + "</div>";
   }
 
   function errorNotice(status, data) {
@@ -515,118 +605,98 @@
     var code = error.code || "error";
 
     if (status === 401) {
-      return '<div class="notice warn"><h3>Not authenticated</h3>' +
-        "<p>" + esc(error.message || "") + "</p>" +
-        "<p>This page sends the public key <code>demo-key</code>. If you are running SerpGuard " +
-        "yourself, include it in <code>SERPGUARD_API_KEYS</code>.</p></div>";
+      return '<div class="notice warn"><h3>Not authenticated</h3><p>' + esc(error.message || "") +
+        "</p><p>This page sends the public key <code>demo-key</code>. If you are running " +
+        "SerpGuard yourself, include it in <code>SERPGUARD_API_KEYS</code>.</p></div>";
     }
     if (status === 429) {
       return '<div class="notice warn"><h3>Rate limited</h3><p>' + esc(error.message || "") +
-        " Every check costs upstream API calls, so the public demo is capped.</p></div>";
+        " Every check costs upstream API calls, so the public demo is capped at 30 per minute.</p></div>";
     }
     if (code === "claim_extraction_failed") {
-      return '<div class="notice bad"><h3>Could not read the extraction result</h3>' +
-        "<p>" + esc(error.message || "") + "</p>" +
-        "<p>This is not &ldquo;nothing to check&rdquo; — that answers <code>200</code> with a " +
-        "message. This means the reply itself was unreadable: not JSON, not a list, cut off at " +
-        "the token limit, or carrying a claim type that does not exist. Reported rather than " +
-        "guessed at.</p></div>";
+      return '<div class="notice bad"><h3>Could not read the extraction result</h3><p>' +
+        esc(error.message || "") + "</p><p>Not the same as &ldquo;nothing to check&rdquo;, which " +
+        "answers <code>200</code>. The reply itself was unreadable.</p></div>";
     }
     if (code === "verification_failed") {
-      return '<div class="notice bad"><h3>Verification failed — deliberately loud</h3>' +
-        "<p>" + esc(error.message || "") + "</p>" +
-        "<p>A verdict that could not be read is reported as an error rather than downgraded to " +
-        "<code>unconfirmed</code>. Confusing the two would quietly corrupt every result.</p></div>";
+      return '<div class="notice bad"><h3>Verification failed — deliberately loud</h3><p>' +
+        esc(error.message || "") + "</p><p>A verdict that could not be read is reported as an " +
+        "error rather than downgraded to <code>unconfirmed</code>.</p></div>";
     }
-    if (code === "configuration_error" || code === "credential_missing") {
-      return '<div class="notice bad"><h3>' + esc(code) + "</h3>" +
-        "<p>" + esc(error.message || "") + "</p>" +
-        "<p>This instance is missing an upstream credential — an operator problem, not yours.</p></div>";
-    }
-
     return '<div class="notice bad"><h3>' + esc(code) + "</h3><p>" + esc(error.message || "") + "</p></div>";
   }
 
   function render(status, data, ms) {
-    var html = statusStrip(status, data, ms);
-
     if (status >= 400 || !data || !data.claims) {
-      html += errorNotice(status, data);
-      out.innerHTML = html + rawBlock(data);
+      out.innerHTML = errorNotice(status, data) + rawBlock(data);
       return;
     }
 
-    // A valid request that simply had nothing to check. Not an error, and not
-    // an empty box either - say what happened and why.
     if (data.claims.length === 0) {
-      html += '<div class="notice good"><h3>' +
-        esc(data.message || "No checkable factual claims found.") + "</h3>" +
-        "<p>The text was read, and none of it is checkable against a public source. Opinions, " +
-        "preferences, predictions and instructions are skipped on purpose — there is nothing " +
-        "for a search engine to confirm or refute.</p>" +
-        "<p>This is a <code>200</code>, not an error. Try one of the presets for text that does " +
-        "contain checkable claims.</p></div>";
-      out.innerHTML = html + rawBlock(data);
+      out.innerHTML = tiles(data, ms) +
+        '<div class="notice good"><h3>' + esc(data.message || "No checkable factual claims found.") +
+        "</h3><p>The text was read, and none of it is checkable against a public source. " +
+        "Opinions, preferences, predictions and instructions are skipped on purpose.</p>" +
+        "<p>This is a <code>200</code>, not an error.</p></div>" + rawBlock(data);
       return;
     }
 
-    html += summaryLine(data, ms);
+    var html = tiles(data, ms);
     data.claims.forEach(function (claim) { html += claimCard(claim); });
 
     var cached = (data.input_summary || {}).cached_claims || 0;
     html += cached === data.claims.length
-      ? '<p class="hint">Every verdict came from MongoDB — no Claude call to rule on them, no ' +
-        "SerpApi search. Compare the response time above with the first run.</p>"
-      : '<p class="hint">Verdicts are now stored. Press <b>Check Claims</b> again with the same ' +
-        "text to see them come back <code>cached: true</code> without any upstream calls.</p>";
+      ? '<p class="hint">Every verdict came from MongoDB — no Claude call, no SerpApi search.</p>'
+      : '<p class="hint">Verdicts are now stored. Run the same text again to see them come back ' +
+        "<code>cached: true</code> with no upstream calls.</p>";
 
     out.innerHTML = html + rawBlock(data);
   }
 
-  // The API answers once, at the end - it does not stream progress. These steps
-  // advance on a timer calibrated to observed timings, so the panel says
-  // "estimated" rather than pretending to report live status.
+  // ---- loading ------------------------------------------------------------
+
+  // The API answers once, at the end — it does not stream. These steps advance
+  // on a timer calibrated to observed timings, which is why the panel says so.
   var STEPS = [
     { label: "Extracting claims", at: 0 },
     { label: "Searching Google via SerpApi", at: 6 },
     { label: "Judging against sources", at: 13 }
   ];
 
-  function progressHtml(seconds) {
-    var current = 0;
-    STEPS.forEach(function (step, i) { if (seconds >= step.at) current = i; });
-
-    var html = '<div class="progress" role="status" aria-live="polite">';
-    STEPS.forEach(function (step, i) {
-      var state = i < current ? "done" : i === current ? "active" : "";
-      html += '<div class="pstep ' + state + '">' +
-        '<span class="pdot" aria-hidden="true">' + (i < current ? "✓" : "") + "</span>" +
-        "<span>" + esc(step.label) + "</span></div>";
-    });
-
-    html += '<div class="pfoot"><span><b>' + seconds + "s</b> elapsed</span>" +
-      "<span>step shown is estimated, not live status</span></div>";
-    return html + "</div>";
-  }
-
   function loading() {
     var started = Date.now();
 
     function paint() {
       var seconds = Math.floor((Date.now() - started) / 1000);
-      var cold = seconds >= Math.round(COLD_START_MS / 1000)
-        ? '<p class="hint">Still waking up — this service runs on a free instance that sleeps ' +
-          "after 15 minutes of inactivity, so the first request can take up to a minute. Each " +
-          "unseen claim is two Claude calls and a live Google search.</p>"
-        : "";
-      out.innerHTML = progressHtml(seconds) + cold;
+      var current = 0;
+      STEPS.forEach(function (step, i) { if (seconds >= step.at) current = i; });
+
+      var html = '<div class="progress" role="status" aria-live="polite">';
+      STEPS.forEach(function (step, i) {
+        var state = i < current ? "done" : i === current ? "active" : "";
+        html += '<div class="pstep ' + state + '"><span class="pdot" aria-hidden="true">' +
+          (i < current ? "✓" : "") + "</span><span>" + esc(step.label) + "</span></div>";
+      });
+      html += '<div class="pfoot"><span><b>' + seconds + "s</b> elapsed</span>" +
+        "<span>step shown is estimated, not live status</span></div></div>";
+
+      if (seconds >= Math.round(COLD_START_MS / 1000)) {
+        html += '<p class="hint">Still waking up — this runs on a free instance that sleeps after ' +
+          "15 minutes of inactivity, so the first request can take up to a minute. Each unseen " +
+          "claim is two Claude calls and a live Google search.</p>";
+      }
+      out.innerHTML = html;
     }
 
     paint();
     return setInterval(paint, 1000);
   }
 
+  // ---- submit -------------------------------------------------------------
+
   function run() {
+    if (go.disabled) return;
+
     var text = input.value;
     if (!text.trim()) {
       out.innerHTML = '<div class="notice warn"><h3>Nothing to check</h3>' +
@@ -634,7 +704,6 @@
       return;
     }
 
-    if (go.disabled) return;   // belt and braces against a double submit
     go.disabled = true;
     var ticker = loading();
     var started = performance.now();
@@ -648,13 +717,12 @@
       .then(function (res) {
         return res.text().then(function (body) {
           var data = null;
-          try { data = JSON.parse(body); } catch (e) { data = { error: { code: "unparsable_response", message: body.slice(0, 400) } }; }
+          try { data = JSON.parse(body); }
+          catch (e) { data = { error: { code: "unparsable_response", message: body.slice(0, 400) } }; }
           return { status: res.status, data: data };
         });
       })
-      .then(function (r) {
-        render(r.status, r.data, performance.now() - started);
-      })
+      .then(function (r) { render(r.status, r.data, performance.now() - started); })
       .catch(function (err) {
         out.innerHTML = '<div class="notice bad"><h3>Could not reach the API</h3><p>' +
           esc(err.message) + ". The instance may still be waking up — try again in a few seconds.</p></div>";
@@ -670,31 +738,44 @@
     Array.prototype.forEach.call(chips, function (other) {
       other.setAttribute("aria-pressed", String(other === chip));
     });
+    updateCounter();
     input.focus();
   }
 
-  form.addEventListener("submit", function (e) {
-    e.preventDefault();
-    run();
+  form.addEventListener("submit", function (e) { e.preventDefault(); run(); });
+  input.addEventListener("input", function () {
+    updateCounter();
+    Array.prototype.forEach.call(chips, function (c) { c.setAttribute("aria-pressed", "false"); });
   });
-
   input.addEventListener("keydown", function (e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      run();
-    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); run(); }
   });
-
+  clearBtn.addEventListener("click", function () {
+    input.value = "";
+    updateCounter();
+    Array.prototype.forEach.call(chips, function (c) { c.setAttribute("aria-pressed", "false"); });
+    out.innerHTML = "";
+    input.focus();
+  });
   Array.prototype.forEach.call(chips, function (chip) {
-    chip.addEventListener("click", function () {
-      loadPreset(chip.getAttribute("data-preset"), chip);
-    });
+    chip.addEventListener("click", function () { loadPreset(chip.getAttribute("data-preset"), chip); });
+  });
+  copyBtn.addEventListener("click", function () {
+    var text = document.getElementById("curl").textContent;
+    var done = function () {
+      copyBtn.textContent = "Copied";
+      setTimeout(function () { copyBtn.textContent = "Copy"; }, 1600);
+    };
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, done);
+    else done();
   });
 
-  // Prefill, but do NOT auto-check: unlike a read-only search, every run spends
-  // Claude and SerpApi credits. The visitor decides when to spend them.
+  document.getElementById("sample").textContent = JSON.stringify(SAMPLE, null, 2);
+
+  // Prefill, but never auto-submit: unlike a read-only search, every run spends
+  // Claude and SerpApi credits. The visitor decides when.
   loadPreset("mixed-facts", chips[0]);
-  out.innerHTML = '<p class="hint">Press <b>Check Claims</b> to run the text above, or pick ' +
+  out.innerHTML = '<p class="hint">Press <b>Verify Claims</b> to run the text above, or pick ' +
     "another preset. Nothing is sent until you do.</p>";
 })();
 </script>

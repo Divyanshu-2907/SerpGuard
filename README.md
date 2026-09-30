@@ -12,7 +12,7 @@ Built for the SerpApi India Hackathon 2026 — AI Agents track.
 
 ## Try it right now
 
-Open <https://serpguard.onrender.com> and press **Check Claims**, or call it directly:
+Open <https://serpguard.onrender.com> and press **Verify Claims**, or call it directly:
 
 ```sh
 curl -X POST https://serpguard.onrender.com/api/v1/checks \
@@ -58,7 +58,7 @@ There is a browser demo at `GET /` and a JSON service description at `GET /api/v
 ## Stack
 
 Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Attack · RSpec + WebMock ·
-198 specs, no live network calls
+210 specs, no live network calls
 
 ---
 
@@ -202,7 +202,7 @@ bin/rails db:mongoid:create_indexes
 
 ```sh
 bin/rails server                 # then open http://localhost:3000
-bundle exec rspec                # 198 examples, needs a local mongod
+bundle exec rspec                # 210 examples, needs a local mongod
 bundle exec rubocop              # rubocop-rails-omakase
 bundle exec rails zeitwerk:check # eager-load check, as production does it
 ```

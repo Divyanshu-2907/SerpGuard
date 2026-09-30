@@ -38,7 +38,7 @@ RSpec.describe "the service front door", type: :request do
       get "/"
 
       expect(response.body).to include("Raw JSON response")
-      expect(response.body).to include("Check Claims")
+      expect(response.body).to include("Verify Claims")
       expect(response.body).to include("free instance")
     end
   end
