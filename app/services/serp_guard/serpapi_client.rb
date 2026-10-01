@@ -22,23 +22,51 @@ module SerpGuard
     DEFAULT_LIMIT = 5
     RESULTS_PER_PAGE = 10
 
+    # Google's "past year" filter. Used for claims the extractor marked
+    # time-sensitive, where a three-year-old page is worse than no page.
+    FRESH_WINDOW = "qdr:y"
+
     # SerpApi answers HTTP 200 with an `error` string when Google simply had
     # nothing to return. That is an empty result set, not a failure - the
     # verifier turns it into an "unconfirmed" verdict.
     NO_RESULTS_PATTERN = /hasn't returned any results|no results (?:found|returned)/i
 
-    # One organic Google result, reduced to the three fields the verifier needs.
-    Result = Data.define(:title, :link, :snippet)
+    # Where a piece of evidence came from in the SerpApi payload. Carried
+    # through so the verdict prompt can weigh Google's own direct answer
+    # differently from the tenth blue link.
+    ORIGIN_ANSWER_BOX = "answer box"
+    ORIGIN_KNOWLEDGE_GRAPH = "knowledge graph"
+    ORIGIN_ORGANIC = "organic"
+
+    # One piece of evidence. `link` may be nil: an answer box or knowledge graph
+    # panel is often rendered from Google's own index with nothing to link to.
+    # Such an item is still worth showing the model, but it can never become a
+    # source_url - see ClaimVerifierService#attributable_url.
+    Result = Data.define(:title, :link, :snippet, :origin) do
+      def initialize(title:, link:, snippet:, origin: ORIGIN_ORGANIC)
+        super
+      end
+
+      def citable?
+        link.present?
+      end
+
+      def direct_answer?
+        origin != ORIGIN_ORGANIC
+      end
+    end
 
     def initialize(api_key: ENV[CREDENTIAL_ENV_VAR], **options)
       super(api_key: api_key, credential_env_var: CREDENTIAL_ENV_VAR, **options)
     end
 
-    # @return [Array<Result>] organic results carrying a snippet, at most `limit`
-    def search(query, limit: DEFAULT_LIMIT)
+    # @param fresh [Boolean] restrict to the past year (Google's qdr:y)
+    # @return [Array<Result>] answer box and knowledge graph first, then organic
+    #   results carrying a snippet, at most `limit` in total
+    def search(query, limit: DEFAULT_LIMIT, fresh: false)
       raise ArgumentError, "query must not be blank" if query.blank?
 
-      with_retries { interpret(execute(query), limit: limit) }
+      with_retries { interpret(execute(query, fresh: fresh), limit: limit) }
     end
 
     private
@@ -57,17 +85,16 @@ module SerpGuard
       body&.[]("error").presence || "no error message returned"
     end
 
-    def execute(query)
-      self.class.get(
-        ENDPOINT,
-        query: {
-          engine: ENGINE,
-          q: query,
-          num: RESULTS_PER_PAGE,
-          api_key: api_key
-        },
-        **request_timeouts
-      )
+    def execute(query, fresh: false)
+      params = {
+        engine: ENGINE,
+        q: query,
+        num: RESULTS_PER_PAGE,
+        api_key: api_key
+      }
+      params[:tbs] = FRESH_WINDOW if fresh
+
+      self.class.get(ENDPOINT, query: params, **request_timeouts)
     end
 
     def interpret(response, limit:)
@@ -91,15 +118,59 @@ module SerpGuard
       build_results(body, limit: limit)
     end
 
+    # Google's direct answers come first - they are the same search, already
+    # paid for, and usually the most on-point text on the page. Organic results
+    # follow and are never dropped to make room: the limit trims the tail.
     def build_results(body, limit:)
-      Array(body["organic_results"])
-        .filter_map { |result| build_result(result) }
-        .first(limit)
+      direct = [ build_answer_box(body["answer_box"]), build_knowledge_graph(body["knowledge_graph"]) ].compact
+      organic = Array(body["organic_results"]).filter_map { |result| build_organic(result) }
+
+      (direct + organic).first(limit)
     end
 
-    # Results without a snippet are useless as evidence - there is nothing for
-    # Claude to weigh - so they are dropped rather than passed on empty.
-    def build_result(result)
+    # The answer box shape varies by question type: a definition has `snippet`,
+    # a calculation has `answer`, a how-to has `list`. Take the first field that
+    # actually carries prose and skip the box entirely when none do.
+    ANSWER_BOX_TEXT_KEYS = %w[answer snippet result description title].freeze
+
+    def build_answer_box(box)
+      return nil unless box.is_a?(Hash)
+
+      text = ANSWER_BOX_TEXT_KEYS.filter_map { |key| box[key].presence if box[key].is_a?(String) }.first
+      text ||= Array(box["snippet_highlighted_words"]).join(", ").presence
+      return nil if text.blank?
+
+      Result.new(
+        title: box["title"].presence || "Google answer box",
+        link: box["link"].presence,
+        snippet: text,
+        origin: ORIGIN_ANSWER_BOX
+      )
+    end
+
+    # The knowledge graph panel describes an entity. Its link, when there is
+    # one, hangs off `source`, not the top level.
+    def build_knowledge_graph(graph)
+      return nil unless graph.is_a?(Hash)
+
+      text = [ graph["description"], graph["snippet"] ].find { |value| value.is_a?(String) && value.present? }
+      return nil if text.blank?
+
+      source = graph["source"]
+      link = (source.is_a?(Hash) ? source["link"] : nil).presence || graph["website"].presence
+
+      Result.new(
+        title: [ graph["title"], graph["type"] ].compact_blank.join(" — ").presence || "Google knowledge graph",
+        link: link,
+        snippet: text,
+        origin: ORIGIN_KNOWLEDGE_GRAPH
+      )
+    end
+
+    # Organic results without a snippet are useless as evidence - there is
+    # nothing for Claude to weigh - and without a link they cannot be cited
+    # either, so they are dropped rather than passed on empty.
+    def build_organic(result)
       return nil unless result.is_a?(Hash)
 
       snippet = result["snippet"]
@@ -109,7 +180,8 @@ module SerpGuard
       Result.new(
         title: result["title"].to_s,
         link: link,
-        snippet: snippet
+        snippet: snippet,
+        origin: ORIGIN_ORGANIC
       )
     end
   end

@@ -845,4 +845,105 @@ RSpec.describe ClaimVerifierService do
       expect(described_class.call(vague)[:verdict]).to eq("unconfirmed")
     end
   end
+
+  # Google's answer box and knowledge graph ride along on the same search. They
+  # are ranked above organic results, labelled for the model, and - when they
+  # carry no link - usable as evidence but never as a citation.
+  describe "direct answers as evidence" do
+    let(:claim) { { claim: "The Eiffel Tower is located in London", type: "fact" } }
+    let(:query) { '"Eiffel Tower" location' }
+
+    let(:organic) do
+      [
+        { title: "Travel blog", link: "https://someblog.example.com/eiffel", snippet: "A trip to the tower." },
+        { title: "Eiffel Tower", link: "https://en.wikipedia.org/wiki/Eiffel_Tower", snippet: "Champ de Mars, Paris." }
+      ]
+    end
+
+    def sent_results
+      order = nil
+      expect(
+        a_claude_request_where { |body|
+          content = body["messages"].first["content"]
+          next false unless content.include?("<search_results>")
+
+          order = content.scan(/<result index="\d+" origin="([^"]+)">\n(.*)\n/).map { |origin, url| [ origin, url ] }
+          true
+        }
+      ).to have_been_made.at_least_once
+      order
+    end
+
+    it "sends the answer box first, labelled, and lets it be cited" do
+      stub_serpapi_payload(results: organic, answer_box: serpapi_answer_box(
+        title: "Eiffel Tower location",
+        link: "https://www.toureiffel.paris/en",
+        snippet: "The Eiffel Tower stands on the Champ de Mars in Paris."
+      ))
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "contradicted", reason: "Google's answer box places it in Paris.",
+                     source_url: "https://www.toureiffel.paris/en")
+      )
+
+      result = described_class.call(claim)
+
+      expect(sent_results.first).to eq([ "answer box", "url: https://www.toureiffel.paris/en" ])
+      expect(result[:verdict]).to eq("contradicted")
+      expect(result[:source_url]).to eq("https://www.toureiffel.paris/en")
+    end
+
+    it "sends a link-less knowledge graph panel but refuses to cite it" do
+      stub_serpapi_payload(results: organic,
+                           knowledge_graph: serpapi_knowledge_graph(source: nil, website: nil))
+      stub_claude_sequence(
+        query,
+        # The model tries to cite the panel anyway; there is nothing to cite.
+        verdict_json(verdict: "contradicted", reason: "The panel places it in Paris.", source_url: "")
+      )
+
+      result = described_class.call(claim)
+
+      labels = sent_results
+      expect(labels.first.first).to eq("knowledge graph")
+      expect(labels.first.last).to eq("url: (none - this item cannot be cited)")
+      expect(result[:verdict]).to eq("contradicted")
+      expect(result[:source_url]).to be_nil
+    end
+
+    it "never lets a link-less panel be matched as the source" do
+      stub_serpapi_payload(results: [], knowledge_graph: serpapi_knowledge_graph(source: nil, website: nil))
+      stub_claude_sequence(
+        query,
+        # An empty-string url must not match the panel's nil link.
+        verdict_json(verdict: "verified", reason: "Panel says so.", source_url: " ")
+      )
+
+      expect(described_class.call(claim)[:source_url]).to be_nil
+    end
+
+    it "keeps organic results below the direct answer rather than dropping them" do
+      stub_serpapi_payload(results: organic, answer_box: serpapi_answer_box,
+                           knowledge_graph: serpapi_knowledge_graph)
+      stub_claude_sequence(query, verdict_json(verdict: "unconfirmed", reason: "Mixed.", source_url: nil))
+
+      described_class.call(claim)
+
+      expect(sent_results.map(&:first)).to eq([ "answer box", "knowledge graph", "organic", "organic" ])
+    end
+
+    it "is unchanged when neither panel is present" do
+      stub_serpapi_payload(results: organic)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "contradicted", reason: "Wikipedia places it in Paris.",
+                     source_url: "https://en.wikipedia.org/wiki/Eiffel_Tower")
+      )
+
+      result = described_class.call(claim)
+
+      expect(sent_results.map(&:first)).to eq([ "organic", "organic" ])
+      expect(result[:source_url]).to eq("https://en.wikipedia.org/wiki/Eiffel_Tower")
+    end
+  end
 end

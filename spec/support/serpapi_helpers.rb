@@ -26,6 +26,54 @@ module SerpapiHelpers
     }.merge(overrides).to_json
   end
 
+  # Realistic shapes, trimmed to the fields the client reads. Both panels come
+  # back on the same search as organic_results - no extra API call.
+  def serpapi_answer_box(**overrides)
+    {
+      type: "organic_result",
+      title: "Ruby Releases",
+      link: "https://www.ruby-lang.org/en/downloads/releases/",
+      snippet: "The current stable version of Ruby is 3.4.1, released 25 December 2024.",
+      snippet_highlighted_words: [ "3.4.1" ]
+    }.merge(overrides)
+  end
+
+  def serpapi_knowledge_graph(**overrides)
+    {
+      title: "Eiffel Tower",
+      type: "Tower in Paris, France",
+      description: "The Eiffel Tower is a wrought-iron lattice tower on the Champ de Mars in Paris, France.",
+      source: { name: "Wikipedia", link: "https://en.wikipedia.org/wiki/Eiffel_Tower" }
+    }.merge(overrides)
+  end
+
+  # One stub covering every part of a Google payload the client reads, with
+  # optional matching on the query string and on the freshness filter.
+  def stub_serpapi_payload(results: [], answer_box: nil, knowledge_graph: nil, query: nil, fresh: nil)
+    matcher = { "engine" => "google" }
+    matcher["q"] = query if query
+    matcher["tbs"] = SerpGuard::SerpapiClient::FRESH_WINDOW if fresh
+
+    extras = {}
+    extras[:answer_box] = answer_box if answer_box
+    extras[:knowledge_graph] = knowledge_graph if knowledge_graph
+
+    request = stub_request(:get, SERPAPI_SEARCH_URL).with(query: hash_including(matcher))
+    request = request.with { |req| !req.uri.query.to_s.include?("tbs=") } if fresh == false
+
+    request.to_return(status: 200, body: serpapi_body(results, **extras), headers: JSON_HEADERS)
+  end
+
+  # Matchers that care whether the date filter was sent.
+  def a_fresh_serpapi_request
+    a_request(:get, SERPAPI_SEARCH_URL)
+      .with(query: hash_including("tbs" => SerpGuard::SerpapiClient::FRESH_WINDOW))
+  end
+
+  def an_unfiltered_serpapi_request
+    a_request(:get, SERPAPI_SEARCH_URL).with { |req| !req.uri.query.to_s.include?("tbs=") }
+  end
+
   def stub_serpapi_results(results)
     stub_request(:get, SERPAPI_SEARCH_URL)
       .with(query: hash_including("engine" => "google"))

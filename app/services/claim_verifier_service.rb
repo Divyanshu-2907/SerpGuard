@@ -23,7 +23,10 @@
 class ClaimVerifierService
   VERDICTS = %w[verified unconfirmed contradicted].freeze
 
-  DEFAULT_SNIPPET_LIMIT = 5
+  # Six rather than five so that an answer box and a knowledge graph panel,
+  # when both are present, add to the evidence instead of pushing two organic
+  # results out of it.
+  DEFAULT_SNIPPET_LIMIT = 6
 
   # How many results to pull before ranking. One page is one SerpApi search
   # either way, so asking for more costs nothing and gives the authority ranking
@@ -127,6 +130,12 @@ class ClaimVerifierService
       - source_url MUST be copied exactly from one of the results given to you. Never
         construct, complete or guess a URL. Use null when no single result carries your
         verdict.
+      - Each result carries an `origin`. "answer box" and "knowledge graph" are Google's
+        own direct answers for this query and are usually the most on-point text here;
+        "organic" is an ordinary search result. Weigh a direct answer accordingly, but
+        hold it to the same standard: it still has to address the specific claim.
+      - A result whose url reads "(none - this item cannot be cited)" is evidence you may
+        reason from, but it must never be your source_url. Cite a result that has a url.
       - When more than one result supports the same verdict, cite the most authoritative
         of them: reference works, official documentation and established publications
         before social media, video platforms and user posts. The results are already
@@ -363,8 +372,15 @@ class ClaimVerifierService
   # citation a reader can do anything with.
   def rank_by_authority(results)
     results.each_with_index
-           .sort_by { |result, index| [ authority_tier(result.link), index ] }
+           .sort_by { |result, index| [ evidence_tier(result), authority_tier(result.link), index ] }
            .map(&:first)
+  end
+
+  # Google's own direct answer outranks any blue link: it is the search
+  # engine's own reading of the page set, and it is already paid for by the
+  # same request. Organic results keep their authority ordering below it.
+  def evidence_tier(result)
+    result.direct_answer? ? 0 : 1
   end
 
   def authority_tier(link)
@@ -401,9 +417,11 @@ class ClaimVerifierService
 
   def verdict_prompt(results)
     formatted = results.each_with_index.map do |result, index|
+      url_line = result.citable? ? "url: #{result.link}" : "url: (none - this item cannot be cited)"
+
       <<~RESULT
-        <result index="#{index + 1}">
-        url: #{result.link}
+        <result index="#{index + 1}" origin="#{result.origin}">
+        #{url_line}
         title: #{result.title}
         snippet: #{result.snippet}
         </result>
@@ -477,7 +495,9 @@ class ClaimVerifierService
     return nil if candidate.blank?
 
     normalized = normalize_url(candidate)
-    match = results.find { |result| normalize_url(result.link) == normalized }
+    # `citable?` first: an answer box with no link must never match on two
+    # blank strings and get passed off as a source.
+    match = results.find { |result| result.citable? && normalize_url(result.link) == normalized }
     return match.link if match
 
     Rails.logger.warn(

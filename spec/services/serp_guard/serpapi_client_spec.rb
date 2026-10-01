@@ -20,8 +20,8 @@ RSpec.describe SerpGuard::SerpapiClient do
 
       expect(found.map(&:to_h)).to eq(
         [
-          { title: "First", link: "https://example.com/1", snippet: "First snippet." },
-          { title: "Second", link: "https://example.com/2", snippet: "Second snippet." }
+          { title: "First", link: "https://example.com/1", snippet: "First snippet.", origin: "organic" },
+          { title: "Second", link: "https://example.com/2", snippet: "Second snippet.", origin: "organic" }
         ]
       )
     end
@@ -162,6 +162,114 @@ RSpec.describe SerpGuard::SerpapiClient do
 
       expect { client.search("anything") }
         .to raise_error(SerpGuard::Errors::SerpApiError, /HTTP 502/)
+    end
+  end
+
+  # Google returns an answer box and a knowledge graph panel on the same
+  # request as organic_results. Using them costs nothing extra and is usually
+  # the most on-point text on the page.
+  describe "direct answers from the same search" do
+    let(:organic) do
+      [
+        { title: "Ruby downloads", link: "https://www.ruby-lang.org/en/downloads/",
+          snippet: "Download the latest Ruby." },
+        { title: "Ruby on Wikipedia", link: "https://en.wikipedia.org/wiki/Ruby_(programming_language)",
+          snippet: "Ruby is an interpreted language." }
+      ]
+    end
+
+    it "turns an answer box into an evidence item" do
+      stub_serpapi_payload(results: organic, answer_box: serpapi_answer_box)
+
+      evidence = described_class.new.search("ruby current stable release")
+
+      box = evidence.first
+      expect(box.origin).to eq(described_class::ORIGIN_ANSWER_BOX)
+      expect(box.title).to eq("Ruby Releases")
+      expect(box.snippet).to eq("The current stable version of Ruby is 3.4.1, released 25 December 2024.")
+      expect(box.link).to eq("https://www.ruby-lang.org/en/downloads/releases/")
+      expect(box).to be_citable
+    end
+
+    it "turns a knowledge graph panel into an evidence item, linked via source" do
+      stub_serpapi_payload(results: organic, knowledge_graph: serpapi_knowledge_graph)
+
+      graph = described_class.new.search("eiffel tower location").first
+
+      expect(graph.origin).to eq(described_class::ORIGIN_KNOWLEDGE_GRAPH)
+      expect(graph.title).to eq("Eiffel Tower — Tower in Paris, France")
+      expect(graph.snippet).to include("Champ de Mars")
+      expect(graph.link).to eq("https://en.wikipedia.org/wiki/Eiffel_Tower")
+    end
+
+    it "puts direct answers ahead of organic results without dropping them" do
+      stub_serpapi_payload(results: organic, answer_box: serpapi_answer_box,
+                           knowledge_graph: serpapi_knowledge_graph)
+
+      origins = described_class.new.search("anything").map(&:origin)
+
+      expect(origins).to eq([
+        described_class::ORIGIN_ANSWER_BOX,
+        described_class::ORIGIN_KNOWLEDGE_GRAPH,
+        described_class::ORIGIN_ORGANIC,
+        described_class::ORIGIN_ORGANIC
+      ])
+    end
+
+    it "keeps a knowledge graph panel that has no link, marked uncitable" do
+      stub_serpapi_payload(results: organic,
+                           knowledge_graph: serpapi_knowledge_graph(source: nil, website: nil))
+
+      graph = described_class.new.search("anything").first
+
+      expect(graph.origin).to eq(described_class::ORIGIN_KNOWLEDGE_GRAPH)
+      expect(graph.link).to be_nil
+      expect(graph).not_to be_citable
+    end
+
+    it "falls back to the knowledge graph's website when there is no source link" do
+      stub_serpapi_payload(results: organic,
+                           knowledge_graph: serpapi_knowledge_graph(source: nil, website: "https://www.toureiffel.paris/en"))
+
+      expect(described_class.new.search("anything").first.link).to eq("https://www.toureiffel.paris/en")
+    end
+
+    it "reads an answer box that carries `answer` rather than `snippet`" do
+      stub_serpapi_payload(results: organic,
+                           answer_box: { type: "calculator_result", answer: "8.2 billion", link: "https://example.gov/pop" })
+
+      box = described_class.new.search("world population").first
+
+      expect(box.snippet).to eq("8.2 billion")
+      expect(box.origin).to eq(described_class::ORIGIN_ANSWER_BOX)
+    end
+
+    it "skips a panel with no usable text at all" do
+      stub_serpapi_payload(results: organic,
+                           answer_box: { type: "map", displayed_link: "maps.google.com" },
+                           knowledge_graph: { title: "Thing", type: "Entity" })
+
+      expect(described_class.new.search("anything").map(&:origin)).to all(eq(described_class::ORIGIN_ORGANIC))
+    end
+
+    it "behaves exactly as before when neither panel is present" do
+      stub_serpapi_payload(results: organic)
+
+      evidence = described_class.new.search("anything")
+
+      expect(evidence.length).to eq(2)
+      expect(evidence.map(&:origin)).to all(eq(described_class::ORIGIN_ORGANIC))
+      expect(evidence.first.title).to eq("Ruby downloads")
+    end
+
+    it "still trims to the limit, tail first" do
+      many = Array.new(8) { |i| { title: "R#{i}", link: "https://example.com/#{i}", snippet: "s#{i}" } }
+      stub_serpapi_payload(results: many, answer_box: serpapi_answer_box)
+
+      evidence = described_class.new.search("anything", limit: 3)
+
+      expect(evidence.length).to eq(3)
+      expect(evidence.first.origin).to eq(described_class::ORIGIN_ANSWER_BOX)
     end
   end
 end
