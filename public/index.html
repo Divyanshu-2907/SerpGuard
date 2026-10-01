@@ -499,14 +499,13 @@
   };
 
   // A real response from https://serpguard.onrender.com/api/v1/checks for the
-  // mixed-facts preset, captured 2026-10-01 - before source_type was added, so
-  // that field is absent here rather than invented. Nothing is illustrative.
+  // mixed-facts preset, captured 2026-10-01 from a cold cache. Nothing here is illustrative.
   var SAMPLE = {
-    checked_at: "2026-10-01T06:33:38Z",
+    checked_at: "2026-10-01T07:03:06Z",
     input_summary: {
       characters: 101,
       claims_extracted: 3,
-      cached_claims: 3,
+      cached_claims: 0,
       verdicts: { verified: 2, unconfirmed: 0, contradicted: 1 }
     },
     claims: [
@@ -514,31 +513,34 @@
         claim: "Ruby on Rails was created by David Heinemeier Hansson",
         type: "fact",
         verdict: "verified",
-        reason: "Multiple sources, including DHH's own site, state he created Ruby on Rails.",
-        source_url: "https://world.hey.com/dhh?page=eyJwYWdlX251bWJlciI6MTgsInZhbHVlcyI6eyJjcmVhdGVkX2F0IjoiMjAyNC0wOS0wMVQxODoxMjoxNC44MjU2OTdaIiwiaWQiOjM5MzUyfX0%3D",
+        reason: "Multiple sources, including his own site, state he created Ruby on Rails.",
+        source_url: "https://world.hey.com/dhh?page=eyJwYWdlX251bWJlciI6NSwidmFsdWVzIjp7ImNyZWF0ZWRfYXQiOiIyMDI0LTA3LTMxVDE1OjQwOjU0LjM5MzkwNFoiLCJpZCI6Mzg3MjB9fQ%3D%3D",
+        source_type: "organic",
         time_sensitive: false,
-        cached: true,
-        checked_at: "2026-09-30T08:02:45Z"
+        cached: false,
+        checked_at: "2026-10-01T07:03:21Z"
       },
       {
         claim: "Ruby on Rails was created in 2004",
         type: "fact",
         verdict: "verified",
-        reason: "Multiple sources state Rails was extracted/launched by DHH in 2004.",
-        source_url: "https://blog.codeminer42.com/a-journey-through-the-greatest-ruby-on-rails-milestones/",
+        reason: "Sources state Rails publicly debuted July 25, 2004 and was created by DHH in 2004.",
+        source_url: "https://lifehacker.com/intro-to-ruby-on-rails-131138",
+        source_type: "organic",
         time_sensitive: false,
-        cached: true,
-        checked_at: "2026-09-28T06:10:53Z"
+        cached: false,
+        checked_at: "2026-10-01T07:03:26Z"
       },
       {
         claim: "The Eiffel Tower is located in London",
         type: "fact",
         verdict: "contradicted",
-        reason: "Sources state the Eiffel Tower is in Paris, on the Champ-de-Mars, not London.",
-        source_url: "https://wikitravel.org/en/Eiffel_Tower",
+        reason: "Sources state the Eiffel Tower is on the Champ de Mars in Paris, France, not London.",
+        source_url: "https://en.wikipedia.org/wiki/Eiffel_Tower",
+        source_type: "knowledge_graph",
         time_sensitive: false,
-        cached: true,
-        checked_at: "2026-09-25T08:35:40Z"
+        cached: false,
+        checked_at: "2026-10-01T07:03:32Z"
       }
     ]
   };
