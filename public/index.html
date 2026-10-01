@@ -211,7 +211,17 @@
   summary {
     font-family:var(--mono); font-size:12px; color:var(--muted); cursor:pointer;
     padding:7px 0; -webkit-user-select:none; user-select:none;
+    /* The native disclosure triangle is suppressed two ways because no single
+       one covers every engine: list-style for Firefox and the standards track,
+       ::-webkit-details-marker for Chrome and Safari. The arrow below is ours. */
+    list-style:none;
   }
+  summary::-webkit-details-marker { display:none; }
+  summary::before {
+    content:"▸"; display:inline-block; margin-right:7px;
+    transition:transform .15s ease;
+  }
+  details[open] > summary::before { transform:rotate(90deg); }
   summary:hover { color:var(--accent); }
   pre {
     font-family:var(--mono); font-size:12.5px; line-height:1.6; margin:8px 0 0;
@@ -426,7 +436,7 @@
     </div>
 
     <details>
-      <summary>▸ Sample response — captured from the live API</summary>
+      <summary>Sample response — captured from the live API</summary>
       <pre id="sample"></pre>
     </details>
   </section>
@@ -534,7 +544,7 @@
   }
 
   function rawBlock(data) {
-    return "<details><summary>▸ Raw JSON response</summary><pre>" +
+    return "<details><summary>Raw JSON response</summary><pre>" +
       esc(JSON.stringify(data, null, 2)) + "</pre></details>";
   }
 
