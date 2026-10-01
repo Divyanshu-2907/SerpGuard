@@ -38,6 +38,11 @@ module SerpGuard
     ORIGIN_KNOWLEDGE_GRAPH = "knowledge graph"
     ORIGIN_ORGANIC = "organic"
 
+    # The same three, as the API reports them in `source_type`. The origin
+    # strings above read as prose because they go into the verdict prompt; these
+    # are identifiers a client can switch on.
+    SOURCE_TYPES = %w[answer_box knowledge_graph organic].freeze
+
     # One piece of evidence. `link` may be nil: an answer box or knowledge graph
     # panel is often rendered from Google's own index with nothing to link to.
     # Such an item is still worth showing the model, but it can never become a
@@ -53,6 +58,11 @@ module SerpGuard
 
       def direct_answer?
         origin != ORIGIN_ORGANIC
+      end
+
+      # @return [String] one of SOURCE_TYPES
+      def source_type
+        origin.tr(" ", "_")
       end
     end
 

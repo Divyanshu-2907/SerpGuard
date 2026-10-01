@@ -35,6 +35,7 @@ RSpec.describe SerpGuardService do
             verdict: "verified",
             reason: "Confirmed by the sources.",
             source_url: "https://example.com/1",
+            source_type: nil,
             time_sensitive: false,
             cached: false,
             checked_at: result[:claims].first[:checked_at]

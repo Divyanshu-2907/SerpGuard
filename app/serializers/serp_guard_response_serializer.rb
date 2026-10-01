@@ -43,6 +43,9 @@ class SerpGuardResponseSerializer
       verdict: claim[:verdict],
       reason: claim[:reason],
       source_url: claim[:source_url],
+      # Where the cited result sat in the SerpApi payload: "answer_box",
+      # "knowledge_graph", "organic", or null when nothing was cited.
+      source_type: claim[:source_type],
       # True when the claim only holds at a point in time. Those are searched
       # against the past year and cached with an expiry rather than forever.
       time_sensitive: claim[:time_sensitive] == true,

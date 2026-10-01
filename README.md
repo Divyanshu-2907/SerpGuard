@@ -64,7 +64,7 @@ There is a browser demo at `GET /` and a JSON service description at `GET /api/v
 ## Stack
 
 Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Attack · RSpec + WebMock ·
-248 specs, no live network calls
+266 specs, no live network calls
 
 ---
 
@@ -158,6 +158,9 @@ Two rules keep this honest:
   rejects it anyway. A verdict is never attributed to something the reader cannot open.
 - **Nothing is displaced.** The evidence window grew from five snippets to six so that both panels,
   when both are present, add to the evidence instead of pushing two organic results out of it.
+- **The citation says where it came from.** Each claim carries `source_type` (`answer_box`,
+  `knowledge_graph`, `organic`, or null), stored with the verdict and shown as a tag on the demo
+  page, so "Google's own answer" is visible rather than implied.
 
 ### Why time-sensitive claims search the past year
 
@@ -204,8 +207,8 @@ hit returns the stored verdict with `cached: true` and makes **zero** upstream c
 only collapses case, whitespace and a trailing full stop - it does not understand paraphrase. Two
 claims that mean the same thing in different words are two different rows. That bites more than it
 sounds like, because extraction is not deterministic: submitting the *same input twice* can produce
-"ActiveSupport adds an `Enumerable#sum_by` method" one run and "ActiveSupport provides an
-Enumerable/Array method `sum_by`" the next, and those miss each other. Re-running identical text
+"ActiveSupport adds an `Enumerable#sum_each_by` method" one run and "ActiveSupport provides an
+Enumerable/Array method `sum_each_by`" the next, and those miss each other. Re-running identical text
 often hits, but it is not guaranteed. Making the cache survive rewording needs matching on meaning
 rather than bytes - embeddings, or a canonical form from the extractor - and neither is built.
 
@@ -264,7 +267,7 @@ bin/rails db:mongoid:create_indexes
 
 ```sh
 bin/rails server                 # then open http://localhost:3000
-bundle exec rspec                # 248 examples, needs a local mongod
+bundle exec rspec                # 266 examples, needs a local mongod
 bundle exec rubocop              # rubocop-rails-omakase
 bundle exec rails zeitwerk:check # eager-load check, as production does it
 ```
@@ -314,6 +317,7 @@ curl -X POST http://localhost:3000/api/v1/checks \
       "verdict": "verified",
       "reason": "The Ruby 3.3.0 release announcement lists YJIT as production ready.",
       "source_url": "https://www.ruby-lang.org/en/news/2023/12/25/ruby-3-3-0-released/",
+      "source_type": "organic",
       "time_sensitive": false,
       "cached": false,
       "checked_at": "2026-09-22T09:41:12Z"
@@ -324,6 +328,7 @@ curl -X POST http://localhost:3000/api/v1/checks \
       "verdict": "contradicted",
       "reason": "The Rails blog dates the 8.0 release to November 2024.",
       "source_url": "https://rubyonrails.org/2024/11/7/rails-8-no-paas-required",
+      "source_type": "answer_box",
       "time_sensitive": false,
       "cached": false,
       "checked_at": "2026-09-22T09:41:12Z"
@@ -351,6 +356,11 @@ Opinions, preferences, predictions and instructions are skipped on purpose, so a
 of those extracts nothing. `message` appears only when `claims` is empty. A reply that could not be
 *read* - not JSON, not a list, truncated, or carrying a claim type that does not exist - is a
 different thing and still returns `500 claim_extraction_failed`.
+
+`source_type` says which part of the SerpApi payload the cited result came from - `answer_box`,
+`knowledge_graph` or `organic` - and is `null` whenever `source_url` is. A reader cannot tell a
+knowledge-graph citation from the tenth blue link by looking at the URL, so the response says which
+it was.
 
 `time_sensitive` reports whether the claim was treated as one that only holds for now: searched
 inside the past year, and cached for 7 days rather than indefinitely.
@@ -409,12 +419,13 @@ Claims** button, and three preset chips that each exercise a different path:
 | Chip | Input | Exercises |
 | ---- | ----- | --------- |
 | `mixed-facts` | Two true claims about Rails and one plainly false one about the Eiffel Tower | Opposite verdicts from one input |
-| `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_by` | `code_api` claims, and the escalation path: a name that appears in **no** result becomes `contradicted` rather than merely unsourced. Whether it fires depends on what Google returns that minute - `sum_by` exists in other languages, and a run whose results mention it is honestly `unconfirmed` |
+| `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_each_by` | `code_api` claims, and the escalation path: a name that appears in **no** result becomes `contradicted` rather than merely unsourced. The invented name was picked by searching for it first - `sum_by`, the previous one, exists in Elixir, so Google returned it and the escalation correctly did not fire |
 | `outdated-stat` | A Ruby version that was current in 2023 | A claim that live results now contradict |
 
 Results render one card per claim with a verdict badge (green / yellow / red), the reason and a
-clickable source, plus a `cached` tag when the verdict came from MongoDB and a `fresh results` tag
-when the claim was searched inside the past-year window. A status strip shows HTTP status, response time, claims checked, how many came from
+clickable source, plus a `cached` tag when the verdict came from MongoDB, a `fresh results` tag
+when the claim was searched inside the past-year window, and a `Google answer box` /
+`Google knowledge graph` tag when the citation came from one of those panels. A status strip shows HTTP status, response time, claims checked, how many came from
 cache, and the verdict tally; raw JSON sits in a collapsed `<details>`. After 2.5s with no response, a
 cold-start notice explains that the free instance is waking up.
 
@@ -497,6 +508,17 @@ It is still an inference rather than a citation, so it is fenced in: `code_api` 
 from `unconfirmed`, only after every query has been tried, never when the search returned nothing,
 and always with `source_url: null` — there is no result to cite for an absence, and inventing one
 would be the very thing the URL check exists to prevent.
+
+**How the name is matched, after getting this wrong live.** The escalation once declared
+`active_support` absent from six results that all discussed Active Support: prose spells an
+identifier however its style guide prefers, and the test compared raw strings. Identifiers are now
+compared with every separator stripped and the case dropped, so `active_support`, "Active Support"
+and "ActiveSupport" are one string; a path-like name (`active_support/all`) is matched on its
+segments, since nothing writes the whole path in prose, and probes shorter than four characters are
+ignored because `all` matches anything. That makes the test deliberately generous - "sum by" in a
+snippet now counts as a mention of `sum_by` - and generous is the right direction here. A fake
+method that slips through is still reported as `unconfirmed`; a real method called fake is a
+confident wrong answer.
 
 ### 4. What I'd do differently at real scale
 

@@ -509,11 +509,16 @@ class ClaimVerifierService
       raise SerpGuard::Errors::VerificationFailed, "Claude returned a #{verdict} verdict with no reason."
     end
 
+    cited = attributable_result(parsed["source_url"], results)
+
     {
       claim: statement,
       verdict: verdict,
       reason: reason,
-      source_url: attributable_url(parsed["source_url"], results)
+      source_url: cited&.link,
+      # Which part of the SerpApi payload the citation came from. nil when
+      # nothing was cited - there is no source to describe.
+      source_type: cited&.source_type
     }
   end
 
@@ -533,14 +538,17 @@ class ClaimVerifierService
   # supplied. A URL Claude invented gets dropped (and logged) rather than
   # failing the verdict, which is still sound on its own - but it is never
   # passed on as a source.
-  def attributable_url(candidate, results)
+  #
+  # @return [SerpGuard::SerpapiClient::Result, nil] the result being cited, so
+  #   the caller gets both its link and where in the payload it came from
+  def attributable_result(candidate, results)
     return nil if candidate.blank?
 
     normalized = normalize_url(candidate)
     # `citable?` first: an answer box with no link must never match on two
     # blank strings and get passed off as a source.
     match = results.find { |result| result.citable? && normalize_url(result.link) == normalized }
-    return match.link if match
+    return match if match
 
     Rails.logger.warn(
       "[serpguard] dropping source_url #{candidate.inspect}: not among the results sent to Claude"
@@ -569,10 +577,13 @@ class ClaimVerifierService
     return outcome if examined.empty?
 
     names = code_identifiers
-    return outcome if names.empty?
+    probes = names.flat_map { |name| identifier_probes(name) }.uniq
+    # Nothing distinctive enough to test for. Staying with `unconfirmed` is the
+    # safe answer: see the note on MIN_IDENTIFIER_PROBE.
+    return outcome if probes.empty?
 
-    haystack = examined.map { |result| "#{result.title} #{result.snippet}" }.join(" ").downcase
-    return outcome if names.any? { |name| haystack.include?(name.downcase) }
+    haystacks = examined.map { |result| squash_identifier("#{result.title} #{result.snippet}") }
+    return outcome if probes.any? { |probe| haystacks.any? { |hay| hay.include?(probe) } }
 
     missing = names.max_by(&:length)
     Rails.logger.info(
@@ -584,13 +595,49 @@ class ClaimVerifierService
       reason: "No search result mentions #{missing}, across #{examined.length} results. " \
               "An API absent from every result for its own name does not exist.",
       # There is no result to cite for an absence, and inventing one would be the
-      # very thing attributable_url exists to prevent.
-      source_url: nil
+      # very thing attributable_result exists to prevent.
+      source_url: nil,
+      source_type: nil
     )
   end
 
+  # Identifiers are compared in a squashed form - lowercase, every separator
+  # removed - so `active_support`, "Active Support" and "ActiveSupport" are one
+  # and the same string.
+  #
+  # This is the fix for a live false positive: the escalation declared
+  # `active_support` absent from six results that all discussed Active Support,
+  # because prose spells an identifier however its style guide prefers. Judging
+  # a real API hallucinated because Google wrote it with a space is the one
+  # mistake this feature must not make.
+  #
+  # Squashing makes the test more generous (word boundaries disappear, so
+  # "sum by" matches `sum_by`), and generous is the right direction: a missed
+  # fake method is still reported as `unconfirmed`, while a real method called
+  # fake is a confident wrong answer.
+  def squash_identifier(text)
+    text.to_s.downcase.gsub(/[^a-z0-9]+/, "")
+  end
+
+  # Probes shorter than this are dropped. `all` or `v2` match almost any page
+  # and would make the absence test meaningless - and a test that never fires
+  # is better here than one that fires wrongly.
+  MIN_IDENTIFIER_PROBE = 4
+
+  # What to look for in a snippet, given one identifier. A path-like name
+  # (`active_support/all`) is tested on its segments as well as whole, because
+  # prose writes the segments, never the path.
+  def identifier_probes(name)
+    segments = name.to_s.split(%r{[/\\]})
+
+    ([ name ] + segments)
+      .map { |part| squash_identifier(part) }
+      .uniq
+      .select { |probe| probe.length >= MIN_IDENTIFIER_PROBE }
+  end
+
   def unconfirmed(reason)
-    { claim: statement, verdict: "unconfirmed", reason: reason, source_url: nil }
+    { claim: statement, verdict: "unconfirmed", reason: reason, source_url: nil, source_type: nil }
   end
 
   def ask_claude(system:, user:, step:)

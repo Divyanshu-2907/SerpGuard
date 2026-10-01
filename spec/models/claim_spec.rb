@@ -94,6 +94,29 @@ RSpec.describe Claim do
     end
   end
 
+  describe "source_type" do
+    it "accepts the three origins and nil" do
+      SerpGuard::SerpapiClient::SOURCE_TYPES.each do |source_type|
+        expect(build_claim(source_type: source_type)).to be_valid
+      end
+      expect(build_claim(source_type: nil)).to be_valid
+    end
+
+    it "rejects anything else, so a wrong label cannot be stored" do
+      expect(build_claim(source_type: "answer box")).not_to be_valid
+      expect(build_claim(source_type: "wikipedia")).not_to be_valid
+    end
+
+    it "comes back on a cache hit" do
+      build_claim(source_type: "answer_box").save!
+
+      stored = described_class.cached_verdict_for("Ruby 3.3 shipped YJIT")
+      extracted = ClaimExtractorService::Claim.new(claim: "Ruby 3.3 shipped YJIT", type: "fact")
+
+      expect(stored.cached_entry_for(extracted)).to include(source_type: "answer_box")
+    end
+  end
+
   describe ".cached_verdict_for" do
     it "returns nil when the claim has never been checked" do
       expect(described_class.cached_verdict_for("Something nobody has checked")).to be_nil
@@ -228,6 +251,7 @@ RSpec.describe Claim do
         verdict: "verified",
         reason: "The release notes say so.",
         source_url: "https://www.ruby-lang.org/",
+        source_type: nil,
         time_sensitive: false,
         cached: true,
         checked_at: stored.checked_at

@@ -23,6 +23,10 @@ class Claim
   field :verdict, type: String
   field :reason, type: String
   field :source_url, type: String
+  # Which part of the SerpApi payload the citation came from: answer_box,
+  # knowledge_graph or organic. nil for a verdict that cited nothing, and for
+  # rows written before the field existed.
+  field :source_type, type: String
   field :checked_at, type: Time
 
   # A time-sensitive verdict is only true for a while. `expires_at` is nil for
@@ -49,6 +53,7 @@ class Claim
   validates :claim_hash, presence: true, uniqueness: true
   validates :verdict, presence: true, inclusion: { in: ClaimVerifierService::VERDICTS }
   validates :claim_type, inclusion: { in: ClaimExtractorService::CLAIM_TYPES }, allow_nil: true
+  validates :source_type, inclusion: { in: SerpGuard::SerpapiClient::SOURCE_TYPES }, allow_nil: true
 
   before_validation :assign_claim_hash
 
@@ -137,6 +142,7 @@ class Claim
       verdict: verdict,
       reason: reason,
       source_url: source_url,
+      source_type: source_type,
       time_sensitive: time_sensitive?,
       cached: true,
       checked_at: checked_at

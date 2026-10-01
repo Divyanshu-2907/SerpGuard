@@ -190,6 +190,7 @@
   }
   .tag.cached { background:var(--ok-bg); color:var(--ok); font-weight:600; }
   .tag.fresh { background:var(--accent-bg); color:var(--accent-2); font-weight:600; }
+  .tag.origin { background:var(--surface-2); color:var(--text-mid); font-weight:600; }
   .claim h3 { font-size:1.02rem; font-weight:600; margin:0 0 7px; line-height:1.45; overflow-wrap:break-word; }
   .claim .reason { margin:0 0 10px; font-size:.93rem; color:var(--text-mid); overflow-wrap:break-word; }
   .claim .src { font-family:var(--mono); font-size:12px; overflow-wrap:break-word; }
@@ -388,7 +389,7 @@
       <div class="card">
         <h3>Google's own answers</h3>
         <p>The <code>answer_box</code> and <code>knowledge_graph</code> from the same response are read as evidence and ranked above the organic results.</p>
-        <span class="detail">No extra search — both arrive with it. An item with no link is still shown to the model, but can never be the cited <code>source_url</code>.</span>
+        <span class="detail">No extra search — both arrive with it. An item with no link is still shown to the model, but can never be the cited <code>source_url</code>. Each claim reports its <code>source_type</code>: <code>answer_box</code>, <code>knowledge_graph</code>, <code>organic</code> or null.</span>
       </div>
       <div class="card">
         <h3>Claims that expire</h3>
@@ -454,7 +455,7 @@
   </section>
 
   <footer>
-    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 248 specs</span>
+    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 266 specs</span>
     <span><a href="https://github.com/Divyanshu-2907/SerpGuard">Divyanshu-2907/SerpGuard</a></span>
   </footer>
 
@@ -491,14 +492,15 @@
       'puts "  hello   world  ".squish\n' +
       "\n" +
       "# Double every number, then total them\n" +
-      "puts [1, 2, 3].sum_by { |n| n * 2 }\n",
+      "puts [1, 2, 3].sum_each_by { |n| n * 2 }\n",
 
     "outdated-stat":
       "Ruby's current stable release is 3.1.4."
   };
 
   // A real response from https://serpguard.onrender.com/api/v1/checks for the
-  // mixed-facts preset, captured 2026-10-01. Nothing here is illustrative.
+  // mixed-facts preset, captured 2026-10-01 - before source_type was added, so
+  // that field is absent here rather than invented. Nothing is illustrative.
   var SAMPLE = {
     checked_at: "2026-10-01T06:33:38Z",
     input_summary: {
@@ -618,6 +620,15 @@
       esc(claim.verdict) + "</span>";
     if (claim.type) html += '<span class="tag">' + esc(claim.type) + "</span>";
     if (claim.cached) html += '<span class="tag cached">cached</span>';
+    // source_type says which part of the SerpApi payload carried the citation.
+    // Only Google's own direct answers get a tag; "organic" is the ordinary
+    // case and would be noise on every card.
+    if (claim.source_type === "answer_box" || claim.source_type === "knowledge_graph") {
+      html += '<span class="tag origin" title="The cited result came from this part of the ' +
+        'Google results, returned by the same SerpApi search">' +
+        (claim.source_type === "answer_box" ? "Google answer box" : "Google knowledge graph") +
+        "</span>";
+    }
     // time_sensitive comes straight from the API: the claim was searched with
     // Google's past-year filter and its cached verdict expires after 7 days.
     if (claim.time_sensitive) {

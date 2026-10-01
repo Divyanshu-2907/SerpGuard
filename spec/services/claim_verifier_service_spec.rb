@@ -50,7 +50,8 @@ RSpec.describe ClaimVerifierService do
         claim: "Ruby 3.3 shipped YJIT as its production JIT compiler",
         verdict: "verified",
         reason: "The Ruby 3.3.0 release announcement lists YJIT as production ready.",
-        source_url: "https://www.ruby-lang.org/en/news/2023/12/25/ruby-3-3-0-released/"
+        source_url: "https://www.ruby-lang.org/en/news/2023/12/25/ruby-3-3-0-released/",
+        source_type: "organic"
       )
     end
 
@@ -141,7 +142,8 @@ RSpec.describe ClaimVerifierService do
         claim: "Ruby 3.3 shipped YJIT as its production JIT compiler",
         verdict: "unconfirmed",
         reason: "No search results were found for this claim.",
-        source_url: nil
+        source_url: nil,
+        source_type: nil
       )
     end
 
@@ -488,7 +490,8 @@ RSpec.describe ClaimVerifierService do
         claim: "Ruby on Rails was created in 2004",
         verdict: "verified",
         reason: "Wikipedia dates the first Rails release to July 2004.",
-        source_url: "https://en.wikipedia.org/wiki/Ruby_on_Rails"
+        source_url: "https://en.wikipedia.org/wiki/Ruby_on_Rails",
+        source_type: "organic"
       )
     end
 
@@ -849,6 +852,94 @@ RSpec.describe ClaimVerifierService do
   # Google's answer box and knowledge graph ride along on the same search. They
   # are ranked above organic results, labelled for the model, and - when they
   # carry no link - usable as evidence but never as a citation.
+  # The live false positive this exists to prevent: `active_support` was judged
+  # absent from six results that all discussed Active Support, because prose
+  # does not spell identifiers the way code does.
+  describe "matching an identifier against prose spellings" do
+    let(:claim) do
+      { claim: 'Active Support can be fully loaded with require "active_support/all"',
+        type: "code_api" }
+    end
+    let(:query) { '"active_support/all" require Rails' }
+
+    def results_saying(snippet)
+      [ { title: "Active Support Core Extensions",
+          link: "https://guides.rubyonrails.org/active_support_core_extensions.html",
+          snippet: snippet } ]
+    end
+
+    # Both rounds answer unconfirmed, which is where the escalation would fire.
+    def stub_rounds(results)
+      stub_serpapi_results_for(query, results)
+      stub_serpapi_results_for("reworded", results)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Nothing specific about the require path.",
+                     source_url: nil),
+        "reworded",
+        verdict_json(verdict: "unconfirmed", reason: "Still nothing specific.", source_url: nil)
+      )
+    end
+
+    it "does not escalate when the results write it as two words" do
+      stub_rounds(results_saying("Active Support extends Ruby's core classes."))
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "does not escalate when the results write it in CamelCase" do
+      stub_rounds(results_saying("ActiveSupport extends Ruby's core classes."))
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "matches a path-like identifier on its segments, not the whole path" do
+      # No page writes "active_support/all" in prose; plenty write the library.
+      stub_rounds(results_saying("Require Active Support and you get every core extension."))
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "still escalates a name that really is absent in every spelling" do
+      invented = { claim: "ActiveSupport adds Enumerable#frobnicate_all", type: "code_api" }
+      stub_serpapi_results_for(query, results_saying("Active Support extends Ruby's core classes."))
+      stub_serpapi_results_for("reworded", results_saying("Core extensions, none of them that."))
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "No mention.", source_url: nil),
+        "reworded",
+        verdict_json(verdict: "unconfirmed", reason: "Still no mention.", source_url: nil)
+      )
+
+      result = described_class.call(invented)
+
+      expect(result[:verdict]).to eq("contradicted")
+      expect(result[:reason]).to include("frobnicate_all")
+    end
+
+    it "never escalates on zero results, whatever the identifier" do
+      stub_serpapi_no_results
+      stub_claude_sequence(query)
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "ignores probes too short to mean anything" do
+      # `to_s` squashes to "tos", which would match "customs" or "photos".
+      vague = { claim: "Every Ruby object responds to to_s", type: "code_api" }
+      stub_serpapi_results_for(query, results_saying("Unrelated page about photos."))
+      stub_serpapi_results_for("reworded", results_saying("Still unrelated."))
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Off topic.", source_url: nil),
+        "reworded",
+        verdict_json(verdict: "unconfirmed", reason: "Off topic.", source_url: nil)
+      )
+
+      expect(described_class.call(vague)[:verdict]).to eq("unconfirmed")
+    end
+  end
+
   describe "direct answers as evidence" do
     let(:claim) { { claim: "The Eiffel Tower is located in London", type: "fact" } }
     let(:query) { '"Eiffel Tower" location' }
@@ -951,6 +1042,82 @@ RSpec.describe ClaimVerifierService do
   # because for "the current stable release" a three-year-old page is worse
   # than no page. The window can be too thin to judge from, so there is exactly
   # one unfiltered fallback - and it must not stack with the reformulation.
+  # A reader cannot tell a knowledge-graph citation from the tenth blue link by
+  # looking at the URL, so the verdict says which it was.
+  describe "reporting where the citation came from" do
+    let(:claim) { { claim: "The Eiffel Tower is located in London", type: "fact" } }
+    let(:query) { '"Eiffel Tower" location' }
+    let(:organic) do
+      [ { title: "Eiffel Tower", link: "https://en.wikipedia.org/wiki/Eiffel_Tower",
+          snippet: "A tower on the Champ de Mars in Paris." } ]
+    end
+
+    def stub_citing(url, **payload)
+      stub_serpapi_payload(results: organic, **payload)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "contradicted", reason: "The sources place it in Paris.", source_url: url)
+      )
+    end
+
+    it "reports answer_box when the answer box was cited" do
+      stub_citing("https://www.toureiffel.paris/en", answer_box: serpapi_answer_box(
+        title: "Eiffel Tower", link: "https://www.toureiffel.paris/en",
+        snippet: "The Eiffel Tower stands on the Champ de Mars in Paris."
+      ))
+
+      expect(described_class.call(claim)[:source_type]).to eq("answer_box")
+    end
+
+    it "reports knowledge_graph when the panel was cited" do
+      stub_citing("https://en.wikipedia.org/wiki/Eiffel_Tower_panel", knowledge_graph: serpapi_knowledge_graph(
+        source: { name: "Wikipedia", link: "https://en.wikipedia.org/wiki/Eiffel_Tower_panel" }
+      ))
+
+      expect(described_class.call(claim)[:source_type]).to eq("knowledge_graph")
+    end
+
+    it "reports organic for an ordinary result" do
+      stub_citing("https://en.wikipedia.org/wiki/Eiffel_Tower")
+
+      result = described_class.call(claim)
+
+      expect(result[:source_type]).to eq("organic")
+      expect(result[:source_url]).to eq("https://en.wikipedia.org/wiki/Eiffel_Tower")
+    end
+
+    it "reports nothing when the verdict cited nothing" do
+      stub_citing(nil)
+
+      expect(described_class.call(claim)).to include(source_url: nil, source_type: nil)
+    end
+
+    it "reports nothing when the cited URL was not one of ours" do
+      stub_citing("https://invented.example.com/made-up")
+
+      # The URL is dropped as unattributable, so there is no source to describe.
+      expect(described_class.call(claim)).to include(source_url: nil, source_type: nil)
+    end
+
+    it "reports nothing when Google returned no results at all" do
+      stub_serpapi_no_results
+      stub_claude_sequence(query)
+
+      expect(described_class.call(claim)[:source_type]).to be_nil
+    end
+
+    it "uses the wire spelling, not the prose label sent to Claude" do
+      stub_citing("https://www.toureiffel.paris/en", answer_box: serpapi_answer_box(
+        title: "Eiffel Tower", link: "https://www.toureiffel.paris/en",
+        snippet: "On the Champ de Mars in Paris."
+      ))
+
+      # The prompt says origin="answer box"; the API says "answer_box".
+      expect(SerpGuard::SerpapiClient::SOURCE_TYPES)
+        .to include(described_class.call(claim)[:source_type])
+    end
+  end
+
   describe "fresh results for time-sensitive claims" do
     let(:claim) { { claim: "Ruby's current stable release is 3.1.4", type: "fact", time_sensitive: true } }
     let(:stale_claim) { { claim: "Ruby 3.3 was released in December 2023", type: "fact", time_sensitive: false } }

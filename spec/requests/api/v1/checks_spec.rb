@@ -87,6 +87,7 @@ RSpec.describe "POST /api/v1/checks", type: :request do
             "verdict" => "verified",
             "reason" => "The Ruby 3.3.0 release announcement lists YJIT as production ready.",
             "source_url" => source_url,
+            "source_type" => "organic",
             "time_sensitive" => false,
             "cached" => false,
             "checked_at" => json["claims"].first["checked_at"]
@@ -283,6 +284,47 @@ RSpec.describe "POST /api/v1/checks", type: :request do
       expect(a_verdict_request).to have_been_made.twice
       expect(Claim.count).to eq(1)
       expect(Claim.first.expires_at).to be > Time.current
+    end
+  end
+
+  describe "source_type on the wire" do
+    let(:knowledge_graph_url) { "https://en.wikipedia.org/wiki/Ruby_(programming_language)" }
+
+    it "reports which part of the payload the citation came from, and stores it" do
+      stub_claude_routing(
+        claims: extracted_claims,
+        query: search_query,
+        verdict: { verdict: "verified", reason: "The panel says so.", source_url: knowledge_graph_url }
+      )
+      stub_serpapi_payload(
+        results: search_results,
+        knowledge_graph: serpapi_knowledge_graph(
+          title: "Ruby", description: "Ruby 3.3 ships YJIT.",
+          source: { name: "Wikipedia", link: knowledge_graph_url }
+        )
+      )
+
+      submit
+
+      expect(json["claims"].first).to include(
+        "source_url" => knowledge_graph_url,
+        "source_type" => "knowledge_graph"
+      )
+      expect(Claim.first.source_type).to eq("knowledge_graph")
+    end
+
+    it "sends null rather than omitting the field when nothing was cited" do
+      stub_claude_routing(
+        claims: extracted_claims,
+        query: search_query,
+        verdict: { verdict: "unconfirmed", reason: "Nothing on point.", source_url: nil }
+      )
+      stub_serpapi_results(search_results)
+
+      submit
+
+      expect(json["claims"].first).to have_key("source_type")
+      expect(json["claims"].first["source_type"]).to be_nil
     end
   end
 

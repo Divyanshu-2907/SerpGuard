@@ -78,6 +78,7 @@ class SerpGuardService
       verdict: verdict[:verdict],
       reason: verdict[:reason],
       source_url: verdict[:source_url],
+      source_type: verdict[:source_type],
       time_sensitive: extracted.time_sensitive,
       cached: false,
       checked_at: checked_at
@@ -105,6 +106,7 @@ class SerpGuardService
       verdict: verdict[:verdict],
       reason: verdict[:reason],
       source_url: verdict[:source_url],
+      source_type: verdict[:source_type],
       checked_at: Time.current.utc,
       # A time-sensitive verdict gets an expiry so it is re-checked rather than
       # served stale; everything else keeps the no-TTL behaviour.
