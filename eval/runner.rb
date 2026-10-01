@@ -47,11 +47,17 @@ module SerpGuard
       keyword_init: true
     )
 
-    def initialize(base_url:, api_key:, serpapi_key: nil, limit: nil, io: $stdout)
+    # @param categories [Array<String>, nil] run only these categories
+    # @param label [String, nil] suffix for the results filename, so a partial
+    #   re-run cannot overwrite the results of a full one
+    def initialize(base_url:, api_key:, serpapi_key: nil, limit: nil,
+                   categories: nil, label: nil, io: $stdout)
       @base_url = base_url
       @api_key = api_key
       @serpapi_key = serpapi_key
       @limit = limit
+      @categories = Array(categories).compact_blank.presence
+      @label = label.presence
       @io = io
       @results = []
       @stopped_early = nil
@@ -64,6 +70,7 @@ module SerpGuard
       say "SerpGuard accuracy benchmark"
       say "  server:   #{base_url}"
       say "  dataset:  #{claims.length} claims from #{relative(DATASET)}"
+      say "  filter:   #{categories.join(', ')}" if categories
       say "  searches: #{@searches_before || 'unknown'} left before the run"
       say ""
 
@@ -88,10 +95,11 @@ module SerpGuard
 
     private
 
-    attr_reader :base_url, :api_key, :serpapi_key, :limit, :io, :results
+    attr_reader :base_url, :api_key, :serpapi_key, :limit, :categories, :label, :io, :results
 
     def load_claims
       claims = YAML.safe_load_file(DATASET)
+      claims = claims.select { |claim| categories.include?(claim["category"]) } if categories
       limit ? claims.first(limit) : claims
     end
 
@@ -276,7 +284,8 @@ module SerpGuard
 
     def write_results
       Dir.mkdir(RESULTS_DIR) unless Dir.exist?(RESULTS_DIR)
-      path = File.join(RESULTS_DIR, "#{Time.now.utc.strftime('%Y-%m-%d')}.json")
+      name = [ Time.now.utc.strftime("%Y-%m-%d"), label ].compact.join("-")
+      path = File.join(RESULTS_DIR, "#{name}.json")
 
       File.write(path, JSON.pretty_generate(payload))
       path
@@ -287,6 +296,7 @@ module SerpGuard
         generated_at: Time.now.utc.iso8601,
         base_url: base_url,
         dataset: relative(DATASET),
+        categories: categories,
         attempted: results.length,
         searches_used: searches_used,
         stopped_early: @stopped_early,

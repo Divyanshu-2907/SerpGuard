@@ -751,7 +751,9 @@ RSpec.describe ClaimVerifierService do
 
       reason = described_class.call(claim)[:reason]
 
-      expect(reason).to include("ActiveRecord::Base.magic_query")
+      # The method name, not the whole qualified constant: that is the name the
+      # absence test actually looked for, and the reason should say so.
+      expect(reason).to include("magic_query")
       expect(reason).to match(/does not exist/i)
     end
 
@@ -855,6 +857,124 @@ RSpec.describe ClaimVerifierService do
   # The live false positive this exists to prevent: `active_support` was judged
   # absent from six results that all discussed Active Support, because prose
   # does not spell identifiers the way code does.
+  # Both of these are benchmark misses, reproduced. The absence test used to
+  # look for every identifier in the claim and treat any one of them turning up
+  # as a mention - so `Relation`, from `ActiveRecord::Relation`, counted as
+  # evidence that `find_or_fail_by` exists.
+  describe "which identifier the absence test looks for" do
+    let(:query) { '"ActiveRecord::Relation" Rails method' }
+    let(:context_query) { "Rails ActiveRecord::Relation query methods documentation" }
+
+    # Real Rails documentation: full of the word "Relation", and of find_by.
+    let(:rails_docs) do
+      [
+        { title: "ActiveRecord::Relation",
+          link: "https://api.rubyonrails.org/classes/ActiveRecord/Relation.html",
+          snippet: "Relation methods: where, find_by, order, limit and pluck." },
+        { title: "Active Record Query Interface",
+          link: "https://guides.rubyonrails.org/active_record_querying.html",
+          snippet: "A Relation is lazy; find_by returns the first matching record." }
+      ]
+    end
+
+    def stub_both_rounds(results)
+      stub_serpapi_results_for(query, results)
+      stub_serpapi_results_for(context_query, results)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Nothing on point.", source_url: nil),
+        context_query,
+        verdict_json(verdict: "unconfirmed", reason: "Still nothing on point.", source_url: nil)
+      )
+    end
+
+    it "escalates an invented method even though the class name is everywhere" do
+      claim = { claim: "ActiveRecord::Relation in Rails provides a find_or_fail_by method",
+                type: "code_api" }
+      stub_both_rounds(rails_docs)
+
+      result = described_class.call(claim)
+
+      expect(result[:verdict]).to eq("contradicted")
+      expect(result[:reason]).to include("find_or_fail_by")
+    end
+
+    it "leaves a real method on the same class alone" do
+      claim = { claim: "ActiveRecord::Relation in Rails provides a find_or_create_by method",
+                type: "code_api" }
+      mentions_it = rails_docs + [
+        { title: "find_or_create_by", link: "https://api.rubyonrails.org/f.html",
+          snippet: "find_or_create_by finds the first record with the given attributes." }
+      ]
+      stub_both_rounds(mentions_it)
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "does not escalate a claim that names only a class, with no method to check" do
+      claim = { claim: "Rails ships an ActiveRecord::Relation class", type: "code_api" }
+      stub_both_rounds(rails_docs)
+
+      # Nothing method-shaped to probe. Reporting `unconfirmed` is the safe
+      # answer: an invented class name is not worth risking a real one.
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+  end
+
+  # The second benchmark miss: a camelCase name matched no identifier pattern at
+  # all, so an invented JavaScript method was never checked for absence.
+  describe "camelCase and dotted identifiers" do
+    let(:query) { '"Array.prototype.mapUnique" JavaScript' }
+    let(:context_query) { "Array.prototype methods MDN JavaScript" }
+
+    let(:mdn_results) do
+      [
+        { title: "Array - JavaScript | MDN",
+          link: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array",
+          snippet: "Instance methods: at, concat, map, findLast, flat, sort, values." }
+      ]
+    end
+
+    def stub_both_rounds(results)
+      stub_serpapi_results_for(query, results)
+      stub_serpapi_results_for(context_query, results)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Nothing on point.", source_url: nil),
+        context_query,
+        verdict_json(verdict: "unconfirmed", reason: "Still nothing on point.", source_url: nil)
+      )
+    end
+
+    it "escalates mapUnique, which appears in no result" do
+      claim = { claim: "JavaScript's Array.prototype has a mapUnique method", type: "code_api" }
+      stub_both_rounds(mdn_results)
+
+      result = described_class.call(claim)
+
+      expect(result[:verdict]).to eq("contradicted")
+      expect(result[:reason]).to include("mapUnique")
+    end
+
+    it "leaves findLast alone, because MDN lists it" do
+      claim = { claim: "JavaScript's Array.prototype has a findLast method", type: "code_api" }
+      stub_both_rounds(mdn_results)
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "treats prose as prose, with no identifier to probe" do
+      # Capitalised words, an apostrophe and an abbreviation with dots - none of
+      # which is an identifier. If any of them were read as one, this claim
+      # would be escalated to `contradicted` off results that never mention it.
+      claim = { claim: "The U.S. Pacific Ocean is the smallest of Earth's oceanic divisions",
+                type: "code_api" }
+      stub_both_rounds(mdn_results)
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+  end
+
   describe "matching an identifier against prose spellings" do
     let(:claim) do
       { claim: 'Active Support can be fully loaded with require "active_support/all"',

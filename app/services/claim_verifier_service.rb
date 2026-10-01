@@ -55,10 +55,36 @@ class ClaimVerifierService
   # anyway, and this is what we paste into a paid search.
   MAX_QUERY_LENGTH = 300
 
-  # Foo::Bar, Foo::Bar#baz, Foo::Bar.baz, or a bare snake_case identifier.
+  # Foo::Bar, Foo::Bar#baz, Foo::Bar.baz, snake_case, camelCase, and a dotted
+  # JavaScript-style path like Array.prototype.findLast.
+  #
+  # The camelCase and dotted forms were missing, and the benchmark found the
+  # cost: `mapUnique` matched nothing here, so an invented JavaScript method had
+  # no identifier to check for and could never be reported as absent.
+  #
+  # The dotted form requires each segment after a dot to start lowercase, which
+  # is what keeps "U.S. Government" and ordinary sentence punctuation out.
   CODE_IDENTIFIER_PATTERN = /
     [A-Za-z_][A-Za-z0-9_]* (?: ::[A-Za-z_][A-Za-z0-9_]* )+ (?: [.\#][A-Za-z0-9_?!]+ )?
+    | [A-Z][A-Za-z0-9]* (?: \.[a-z][A-Za-z0-9_]* )+
     | \b [a-z][a-z0-9]* (?: _[a-z0-9]+ )+ \b
+    | \b [a-z][a-z0-9]* (?: [A-Z][a-z0-9]+ )+ \b
+  /x
+
+  # Which of those names can stand as evidence of absence: one with an
+  # identifier's shape, meaning an underscore or an internal capital.
+  #
+  # `Relation`, `prototype` and `sort` are ordinary words. A page about the
+  # library contains them whatever the claim says, and counting them as a
+  # mention is exactly how `ActiveRecord::Relation ... find_or_fail_by` escaped
+  # the escalation: the word "Relation" was in every result.
+  DISTINCTIVE_NAME_PATTERN = /
+    \A
+    (?: [A-Za-z0-9]+ _ [A-Za-z0-9_]+
+      | [a-z][A-Za-z0-9]* [A-Z] [A-Za-z0-9]*
+    )
+    [?!]?
+    \z
   /x
 
   # Two or more capitalised words, optionally joined by a lowercase connector:
@@ -390,7 +416,7 @@ class ClaimVerifierService
   # same name again would return the same nothing, so this asks for the context
   # instead - which is what makes the absence readable either way.
   def context_only_prompt
-    identifier = code_identifiers.max_by(&:length)
+    identifier = absence_identifiers.max_by(&:length)
 
     <<~PROMPT
       <claim type="#{type}">
@@ -447,7 +473,7 @@ class ClaimVerifierService
   # silence is the finding. If they do mention it, the name is real and the
   # verdict stays where it is.
   def context_retry_warranted?(results)
-    type == "code_api" && results.empty? && code_identifiers.any?
+    type == "code_api" && results.empty? && absence_identifiers.any?
   end
 
   # Does the evidence mention any of the claim's distinctive terms at all?
@@ -474,9 +500,32 @@ class ClaimVerifierService
 
   def code_identifiers
     statement.scan(CODE_IDENTIFIER_PATTERN)
-             .flat_map { |token| [ token, token[/[A-Za-z0-9_?!]+\z/] ] }
+             .flat_map { |token| [ token, most_specific_part(token) ] }
              .compact_blank
              .uniq
+  end
+
+  # The names whose absence from the evidence means something: the method, not
+  # the class or namespace it hangs off. `ActiveRecord::Relation` reduces to
+  # `Relation`, which is dropped as an ordinary word, leaving `find_or_fail_by`
+  # to be judged on its own - which is the point.
+  #
+  # A claim naming only a class and no method therefore has nothing to probe,
+  # and nothing to probe means no escalation. That is the safe direction: an
+  # invented class name is reported `unconfirmed` rather than risking a real one
+  # being called fake.
+  def absence_identifiers
+    @absence_identifiers ||= code_identifiers
+                             .map { |identifier| most_specific_part(identifier) }
+                             .compact_blank
+                             .uniq
+                             .select { |name| name.match?(DISTINCTIVE_NAME_PATTERN) }
+  end
+
+  # The last segment of a qualified name: the method in `Foo::Bar.baz` or
+  # `Array.prototype.findLast`, and the whole thing when there is no qualifier.
+  def most_specific_part(identifier)
+    identifier[/[A-Za-z0-9_?!]+\z/]
   end
 
   def named_entities
@@ -572,6 +621,8 @@ class ClaimVerifierService
   end
 
   def rule_on(results)
+    log_evidence(results)
+
     response = ask_claude(
       system: VERDICT_SYSTEM_PROMPT,
       user: verdict_prompt(results),
@@ -579,6 +630,19 @@ class ClaimVerifierService
     )
 
     parse_verdict(response, results)
+  end
+
+  # Whatever the verdict turns out to be, this is what it was judged on. The
+  # benchmark had one miss - `dedupe_sorted` - that could not be explained
+  # afterwards because the snippets were gone; now they are in the log.
+  def log_evidence(results)
+    Rails.logger.debug do
+      lines = results.each_with_index.map do |result, index|
+        "  #{index + 1}. [#{result.origin}] #{result.title} - #{result.snippet}"
+      end
+
+      lines.unshift("[serpguard] evidence for #{statement.inspect}:").join("\n")
+    end
   end
 
   def verdict_prompt(results)
@@ -700,7 +764,7 @@ class ClaimVerifierService
     return outcome unless type == "code_api" && outcome[:verdict] == "unconfirmed"
     return outcome if examined.empty?
 
-    names = code_identifiers
+    names = absence_identifiers
     probes = names.flat_map { |name| identifier_probes(name) }.uniq
     # Nothing distinctive enough to test for. Staying with `unconfirmed` is the
     # safe answer: see the note on MIN_IDENTIFIER_PROBE.

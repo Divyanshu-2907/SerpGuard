@@ -6,6 +6,8 @@
 #   bin/rails eval:run                      # localhost:3000, whole dataset
 #   EVAL_BASE_URL=... EVAL_LIMIT=5 ...      # somewhere else, first 5 claims
 #   EVAL_CLEAR_CACHE=1 bin/rails eval:run   # empty the local cache first
+#   EVAL_CATEGORIES=real_method,invented_method EVAL_LABEL=code bin/rails eval:run
+#                                           # one slice, saved as <date>-code.json
 namespace :eval do
   desc "Score SerpGuard against eval/claims.yml (makes paid live calls)"
   task run: :environment do
@@ -40,7 +42,9 @@ namespace :eval do
       api_key: api_key,
       # Only used to read the balance from account.json, which is not a search.
       serpapi_key: ENV["SERPAPI_KEY"],
-      limit: ENV["EVAL_LIMIT"].presence&.to_i
+      limit: ENV["EVAL_LIMIT"].presence&.to_i,
+      categories: ENV["EVAL_CATEGORIES"].to_s.split(","),
+      label: ENV["EVAL_LABEL"]
     )
 
     runner.call
