@@ -4,6 +4,10 @@
 
 **Fact-checks AI-generated text and code against live search results.**
 
+For developers about to commit AI-written code or docs: it catches the version number, method name
+or figure a model stated confidently and got wrong, before it reaches a codebase or a reader who
+will believe it.
+
 Built for the SerpApi India Hackathon 2026 — AI Agents track.
 
 **Live:** <https://serpguard.onrender.com>
@@ -44,8 +48,10 @@ discrete claims that can actually be checked, runs a real Google search per clai
 and then asks Claude to rule on each claim **against the returned snippets only** — returning
 `verified`, `unconfirmed` or `contradicted` with a one-line reason and a source URL taken from the
 results themselves. The point is that a second model reading its own training data cannot catch a
-stale fact; a live search can. Verdicts are cached per claim, so a claim that comes back in the same
-words costs nothing the second time.
+stale fact; a live search can. Where Google answers the query itself — an answer box or a knowledge
+graph panel — that answer is weighed ahead of the ordinary results, and a claim that only holds
+*right now* is searched inside the past year. Verdicts are cached per claim, so a claim that comes
+back in the same words costs nothing the second time.
 
 ```
 POST /api/v1/checks   { "text": "Rails 8 was released in March 2023." }
@@ -58,7 +64,7 @@ There is a browser demo at `GET /` and a JSON service description at `GET /api/v
 ## Stack
 
 Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Attack · RSpec + WebMock ·
-210 specs, no live network calls
+248 specs, no live network calls
 
 ---
 
@@ -68,8 +74,8 @@ Three service objects, each with one job, composed by the third:
 
 | Object | Input → output | Responsibility |
 | ------ | -------------- | -------------- |
-| `ClaimExtractorService` | text → `[Claim(claim:, type:)]` | Asks Claude for the independently checkable claims, each restated to stand alone, typed `fact` / `code_api` / `statistic`. Validates the JSON that comes back. |
-| `ClaimVerifierService` | one claim → `{claim:, verdict:, reason:, source_url:}` | Claude writes a search query → SerpApi runs it → Claude rules on the claim against the snippets. Reformulates the query once if the results came back about something else. Validates the verdict. |
+| `ClaimExtractorService` | text → `[Claim(claim:, type:, time_sensitive:)]` | Asks Claude for the independently checkable claims, each restated to stand alone, typed `fact` / `code_api` / `statistic`, and flagged `time_sensitive` when the claim only holds for now. Validates the JSON that comes back. |
+| `ClaimVerifierService` | one claim → `{claim:, verdict:, reason:, source_url:}` | Claude writes a search query → SerpApi runs it → Claude rules on the claim against the snippets. Google's answer box and knowledge graph rank above the organic results, and a time-sensitive claim searches the past year first. Reformulates the query once if the results came back about something else. Validates the verdict. |
 | `SerpGuardService` | text → the full report | Extracts once, then per claim prefers a cached verdict over the upstream calls a fresh one costs. Persists new verdicts. |
 
 Below them sit two transports and nothing else:
@@ -131,6 +137,60 @@ the citation was useless, so evidence is now ordered by source authority — ref
 official docs ahead of social and video — before it reaches the model. Ordering only: nothing is
 discarded, and a social post still carries a verdict when it is all Google returned.
 
+### Why Google's own answers count as evidence
+
+A SerpApi response is not just `organic_results`. When Google can answer the query itself it returns
+an `answer_box`, and for an entity it returns a `knowledge_graph` panel — both on the same search,
+at no extra call. For a claim like "the current stable release is X" the answer box often states the
+version in one sentence, while the organic results are release-notes pages that bury it.
+
+So both panels are read out of the response the search already paid for, converted into the same
+`title` / `snippet` / `link` shape as an organic result, labelled with their origin, and ranked in a
+tier above organic before authority ordering runs. The prompt is told which is which and weighs a
+direct answer accordingly, while still holding it to the same standard — it has to address the
+specific claim, not merely the topic.
+
+Two rules keep this honest:
+
+- **No link, no citation.** An answer box does not always carry a URL, and a knowledge graph panel
+  may have no `source.link`. Such an item is still shown to the model as evidence, but it can never
+  become `source_url`: the prompt marks it `(none - this item cannot be cited)` and the URL check
+  rejects it anyway. A verdict is never attributed to something the reader cannot open.
+- **Nothing is displaced.** The evidence window grew from five snippets to six so that both panels,
+  when both are present, add to the evidence instead of pushing two organic results out of it.
+
+### Why time-sensitive claims search the past year
+
+"Ruby's current stable release is 3.1.4" was true once. The sentence does not change; the world does.
+Searched against the whole web it returns pages from every year at once, and nothing in the results
+says which one is current.
+
+So the extractor flags each claim:
+
+```json
+{ "claim": "Ruby's current stable release is 3.1.4", "type": "fact", "time_sensitive": true }
+```
+
+Only an explicit `true` counts. A reply that omits the field, or sends `null` or `"yes"`, is treated
+as `false` — the wider search and a verdict that never expires — so a sloppy or older reply degrades
+to the previous behaviour rather than to the wrong window.
+
+A flagged claim is searched with SerpApi's `tbs=qdr:y`, Google's past-year filter. If that window
+holds fewer than three usable results then the window is the problem rather than the claim, so
+**one** unfiltered search follows and freshness is pinned off for the rest of the run — a
+reformulated query cannot re-trigger it. That bounds the cost of an uncached claim:
+
+| | Common path | Worst case |
+| -- | ----------- | ---------- |
+| SerpApi searches | 1 | **3** — past-year, unfiltered fallback, reformulated |
+| Claude calls | 2 — query, verdict | **4** — plus a reformulated query and a second verdict |
+
+The verdict for a time-sensitive claim is stored with `expires_at` 7 days out; everything else keeps
+a nil `expires_at` and stays cached indefinitely. Expiry is enforced by the cache *query*, not by the
+TTL index — Mongo's reaper only sweeps about once a minute, so an expired row is still sitting in the
+unique index when the claim comes back. Writes therefore go through `Claim.upsert_verdict!`, which
+overwrites that row instead of inserting beside it.
+
 ### Why caching is per claim, not per request
 
 The cache key is a SHA256 of the *normalized* claim text (case, whitespace and a trailing full stop
@@ -157,10 +217,12 @@ Two honest limits:
 
 - **A repeat request is one Claude call, not zero.** Extraction runs every time; only verdicts are
   cached. Caching extraction per input text is the obvious next win.
-- **There is no TTL, deliberately.** Search results go stale; the facts they establish mostly do
-  not. Where that assumption breaks — time-sensitive claims, and cached `unconfirmed` verdicts,
-  which often say more about what Google surfaced that minute than about the claim — is written out
-  in `Claim.cached_verdict_for`, along with where to add freshness rules.
+- **Only time-sensitive claims expire.** Search results go stale; the facts they establish mostly
+  do not, so a verdict with no `expires_at` is kept indefinitely. Claims that only hold for now are
+  flagged by the extractor and expire after 7 days (above). The assumption still live is a cached
+  `unconfirmed` verdict on a claim that is *not* time-sensitive: those often say more about what
+  Google surfaced that minute than about the claim, and they are kept forever.
+  `Claim.cached_verdict_for` says so, and says where to change it.
 
 ---
 
@@ -202,7 +264,7 @@ bin/rails db:mongoid:create_indexes
 
 ```sh
 bin/rails server                 # then open http://localhost:3000
-bundle exec rspec                # 210 examples, needs a local mongod
+bundle exec rspec                # 248 examples, needs a local mongod
 bundle exec rubocop              # rubocop-rails-omakase
 bundle exec rails zeitwerk:check # eager-load check, as production does it
 ```
@@ -252,6 +314,7 @@ curl -X POST http://localhost:3000/api/v1/checks \
       "verdict": "verified",
       "reason": "The Ruby 3.3.0 release announcement lists YJIT as production ready.",
       "source_url": "https://www.ruby-lang.org/en/news/2023/12/25/ruby-3-3-0-released/",
+      "time_sensitive": false,
       "cached": false,
       "checked_at": "2026-09-22T09:41:12Z"
     },
@@ -261,6 +324,7 @@ curl -X POST http://localhost:3000/api/v1/checks \
       "verdict": "contradicted",
       "reason": "The Rails blog dates the 8.0 release to November 2024.",
       "source_url": "https://rubyonrails.org/2024/11/7/rails-8-no-paas-required",
+      "time_sensitive": false,
       "cached": false,
       "checked_at": "2026-09-22T09:41:12Z"
     }
@@ -288,9 +352,13 @@ of those extracts nothing. `message` appears only when `claims` is empty. A repl
 *read* - not JSON, not a list, truncated, or carrying a claim type that does not exist - is a
 different thing and still returns `500 claim_extraction_failed`.
 
+`time_sensitive` reports whether the claim was treated as one that only holds for now: searched
+inside the past year, and cached for 7 days rather than indefinitely.
+
 `max_claims` is optional, clamped to 1–25 — an unseen claim costs two Claude calls and one SerpApi
-search, or three and two when its first query has to be reformulated, so it is a spend limit as much
-as a response-size one. A cached claim costs nothing.
+search on the common path, and at most four and three (see
+[the past-year window](#why-time-sensitive-claims-search-the-past-year)), so it is a spend limit as
+much as a response-size one. A cached claim costs nothing.
 
 ### Verdicts
 
@@ -345,7 +413,8 @@ Claims** button, and three preset chips that each exercise a different path:
 | `outdated-stat` | A Ruby version that was current in 2023 | A claim that live results now contradict |
 
 Results render one card per claim with a verdict badge (green / yellow / red), the reason and a
-clickable source. A status strip shows HTTP status, response time, claims checked, how many came from
+clickable source, plus a `cached` tag when the verdict came from MongoDB and a `fresh results` tag
+when the claim was searched inside the past-year window. A status strip shows HTTP status, response time, claims checked, how many came from
 cache, and the verdict tally; raw JSON sits in a collapsed `<details>`. After 2.5s with no response, a
 cold-start notice explains that the free instance is waking up.
 
@@ -434,8 +503,9 @@ would be the very thing the URL check exists to prevent.
 - **Fan out the per-claim verification.** It is sequential today; ten claims are ten round trips.
   A job queue with per-claim jobs and a polled result would cut wall-clock time substantially.
 - **Cache extraction, not just verdicts.** Re-submitting the same document still pays for extraction.
-- **Revisit the no-TTL decision for `unconfirmed`.** Those are the verdicts most likely to change on
-  a re-check, and the ones least useful to keep forever.
+- **Expire `unconfirmed` verdicts too.** Time-sensitive claims expire after 7 days, but an
+  `unconfirmed` verdict on an ordinary claim is kept forever — and those are the verdicts most
+  likely to change on a re-check.
 
 ---
 

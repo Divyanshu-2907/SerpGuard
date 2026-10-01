@@ -2,8 +2,9 @@
 
 # A claim SerpGuard has already checked, stored so an identical claim never gets
 # verified twice. One verification costs three upstream calls (two Claude, one
-# SerpApi), or five when its query has to be reformulated, so the cache is the
-# difference between a demo that is affordable and one that is not.
+# SerpApi) on the common path and at most seven - see ClaimVerifierService - so
+# the cache is the difference between a demo that is affordable and one that is
+# not.
 #
 # Lookup is by SHA256 of the *normalized* claim text rather than the text
 # itself, so trivial differences in whitespace, case or a trailing full stop

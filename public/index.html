@@ -330,8 +330,9 @@
   <div class="hero">
     <h1>Verify AI claims against the live web.</h1>
     <p>
-      <b>Claude</b> extracts the checkable claims from your text or code, <b>SerpApi</b> fetches
-      live Google results for each one, and each claim comes back with a verdict and a source.
+      For developers checking AI-written code and docs before they ship. <b>Claude</b> extracts the
+      checkable claims from your text, <b>SerpApi</b> fetches live Google results for each one, and
+      each claim comes back with a verdict and a source you can open.
     </p>
   </div>
 
@@ -359,14 +360,14 @@
 
   <section>
     <h2>How it works</h2>
-    <p class="sub">One POST · three upstream calls per unseen claim</p>
+    <p class="sub">One POST · three upstream calls per unseen claim, at most seven</p>
 
     <div class="pipeline">
       <div class="pnode"><span class="i">01</span><span class="t">Extract</span><span class="d">Claude → claims</span></div>
       <span class="parrow" aria-hidden="true">→</span>
       <div class="pnode"><span class="i">02</span><span class="t">Search</span><span class="d">SerpApi → Google</span></div>
       <span class="parrow" aria-hidden="true">→</span>
-      <div class="pnode"><span class="i">03</span><span class="t">Rank sources</span><span class="d">authority tiers</span></div>
+      <div class="pnode"><span class="i">03</span><span class="t">Rank sources</span><span class="d">direct answers, then authority</span></div>
       <span class="parrow" aria-hidden="true">→</span>
       <div class="pnode"><span class="i">04</span><span class="t">Judge</span><span class="d">Claude → verdict</span></div>
       <span class="parrow" aria-hidden="true">→</span>
@@ -383,6 +384,16 @@
         <h3>Judged on sources only</h3>
         <p>The verdict prompt rules against the returned snippets, not the model's own knowledge.</p>
         <span class="detail">A model checking a model agrees when both are wrong. The live search is the source of truth; Claude is the reader.</span>
+      </div>
+      <div class="card">
+        <h3>Google's own answers</h3>
+        <p>The <code>answer_box</code> and <code>knowledge_graph</code> from the same response are read as evidence and ranked above the organic results.</p>
+        <span class="detail">No extra search — both arrive with it. An item with no link is still shown to the model, but can never be the cited <code>source_url</code>.</span>
+      </div>
+      <div class="card">
+        <h3>Claims that expire</h3>
+        <p>A claim that only holds for now is searched inside Google's past year (<code>tbs=qdr:y</code>) and tagged <b>fresh results</b>.</p>
+        <span class="detail">Fewer than three results in that window falls back to one unfiltered search. Worst case per claim: 3 searches, 4 Claude calls. Its verdict is cached for 7 days, not forever.</span>
       </div>
       <div class="card">
         <h3>Unreadable ≠ unconfirmed</h3>
@@ -402,11 +413,11 @@
       <div class="card">
         <h3>Verdicts are cached</h3>
         <p>Each claim is keyed by a SHA256 of its normalized text, unique-indexed in MongoDB.</p>
-        <span class="detail">A hit returns <code>cached: true</code> with zero upstream calls. Normalization collapses case and spacing, not paraphrase.</span>
+        <span class="detail">A hit returns <code>cached: true</code> with zero upstream calls. Normalization collapses case and spacing, not paraphrase. Time-sensitive verdicts expire after 7 days; the rest are kept.</span>
       </div>
       <div class="card">
         <h3>Retries, once</h3>
-        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A query whose results come back about a different subject gets one rewrite — and only then.</p>
+        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A query whose results come back about a different subject gets one rewrite, and a thin past-year window one unfiltered fallback — neither can stack.</p>
         <span class="detail">A 4xx that cannot succeed on a second identical attempt is never sent twice. 5s connect / 30s read; <code>Retry-After</code> honoured but capped at 2s.</span>
       </div>
     </div>
@@ -443,7 +454,7 @@
   </section>
 
   <footer>
-    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 210 specs</span>
+    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 248 specs</span>
     <span><a href="https://github.com/Divyanshu-2907/SerpGuard">Divyanshu-2907/SerpGuard</a></span>
   </footer>
 
