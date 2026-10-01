@@ -68,6 +68,83 @@ Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Att
 
 ---
 
+## How accurate is it?
+
+Measured, not asserted. `eval/claims.yml` holds 25 claims with a known answer, every label checked
+against a source URL recorded next to it. The benchmark runs outside RSpec because it spends real
+Claude and SerpApi calls; the test suite stays offline.
+
+**Run of 1 October 2026** — 25 claims, local server, empty cache, 38 SerpApi searches.
+
+| | Count | |
+| -- | ----- | -- |
+| Correct | **18 / 25** | the verdict matched the label |
+| Abstained | **7** | answered `unconfirmed` — the search found nothing decisive |
+| Wrong | **0** | no confident verdict disagreed with a label |
+|  false `verified` | 0 | never called a false claim true |
+|  false `contradicted` | 0 | never called a true claim false |
+
+| Category | n | Correct | Abstained | Wrong |
+| -------- | - | ------- | --------- | ----- |
+| True facts | 6 | 6 | 0 | 0 |
+| False facts | 6 | 6 | 0 | 0 |
+| Real methods | 5 | 4 | 1 | 0 |
+| Invented methods | 5 | **0** | 5 | 0 |
+| Time-sensitive | 3 | 2 | 1 | 0 |
+
+Average 30.4s per uncached claim, slowest 109.6s. One SerpApi read timeout retried and recovered.
+
+The honest reading: on this dataset SerpGuard never stated a wrong verdict, and it got every plain
+fact right in both directions. It abstained on 7 of 25, and the abstentions are concentrated in the
+one place that matters most — the hallucinated-API catch scored **0 of 5**.
+
+### The misses
+
+**1. Every invented method came back `unconfirmed` instead of `contradicted`** (`im-01` … `im-05`).
+Each was typed `code_api` and reached the escalation, and none of them fired. Three different
+reasons, and only the first is the system being right:
+
+- `compact_sum` and `transform_pairs` are *mentioned* on the web — both are open Ruby feature
+  requests on bugs.ruby-lang.org. The name appears in the results, so the escalation correctly held
+  off, and `unconfirmed` with a link to the proposal is a fair answer.
+- `find_or_fail_by` lost to its own namespace. The claim names `ActiveRecord::Relation`, and
+  `#code_identifiers` adds the trailing segment `Relation` as a term to look for; Rails
+  documentation pages obviously contain the word "Relation", so the evidence counted as covering
+  the claim even though `find_or_fail_by` appeared nowhere in it.
+- `mapUnique` is invisible to the identifier scanner. `CODE_IDENTIFIER_PATTERN` matches
+  `Foo::Bar`-style constants and `snake_case` names; it does not match camelCase, nor
+  `Array.prototype`. With no identifier found, neither the context-only retry nor the escalation can
+  fire, so a JavaScript-style name is never checked for absence at all.
+
+**2. A real method missed because the claim was specific about where it lives** (`rm-03`).
+"ActiveRecord::Relation in Rails provides a find_or_create_by method" came back `unconfirmed`:
+*"Snippets confirm find_or_create_by exists in Rails but none state it is provided by
+ActiveRecord::Relation specifically."* The verdict is a correct reading of the snippets — the
+evidence showed the method, not the class that defines it — so this is the judging prompt being
+strict about a detail the search never surfaced.
+
+**3. The current Rails major version could not be sourced** (`ts-02`). "The current major version of
+Ruby on Rails is 6" returned off-topic results and `unconfirmed`, while the two other
+time-sensitive claims (Python 3.9, Microsoft's CEO) were both correctly `contradicted`. Nothing in
+the returned snippets stated a current major version, and the verifier will not fill that in from
+the model's own knowledge.
+
+None of these were tuned away. The numbers above are the first and only run of this dataset.
+
+### Re-running it
+
+```sh
+bin/rails server                     # a server with real API keys
+EVAL_CLEAR_CACHE=1 bin/rails eval:run
+```
+
+It refuses to run against anything but an empty `serpguard_development`, pauses between claims, and
+stops by itself if another claim could take the SerpApi balance under 100 searches — reporting how
+far it got. Raw per-claim output, including the reason and source for every verdict, is written to
+`eval/results/<date>.json`. `EVAL_BASE_URL` points it elsewhere and `EVAL_LIMIT` shortens the run.
+
+---
+
 ## Architecture
 
 Three service objects, each with one job, composed by the third:
@@ -433,7 +510,7 @@ Claims** button, and three preset chips that each exercise a different path:
 | ---- | ----- | --------- |
 | `mixed-facts` | Two true claims about Rails and one plainly false one about the Eiffel Tower | Opposite verdicts from one input |
 | `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_each_by` | `code_api` claims, and the escalation path: a name that appears in **no** result becomes `contradicted` rather than merely unsourced. The invented name was picked by searching for it first - `sum_by`, the previous one, exists in Elixir, so Google returned it and the escalation correctly did not fire |
-| `outdated-stat` | A Ruby version that was current in 2023 | A claim that live results now contradict |
+| `outdated-stat` | A Ruby patch release presented as the current stable one | A time-sensitive claim that live results contradict |
 
 Results render one card per claim with a verdict badge (green / yellow / red), the reason and a
 clickable source, plus a `cached` tag when the verdict came from MongoDB, a `fresh results` tag

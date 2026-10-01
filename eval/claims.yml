@@ -1,0 +1,166 @@
+# Accuracy benchmark dataset for `rake eval:run`.
+#
+# 25 claims with a known answer. Every `expected` label was checked against the
+# `label_source` URL before this file was written - these are not recalled from
+# memory, and anything that could not be sourced is not in here.
+#
+# Rules the set follows:
+#   - Clear and checkable. No opinions, no disputed facts, no trick wording.
+#   - None of the three demo presets, or any claim from them, appears here.
+#   - For an invented method, the label source is the canonical method list for
+#     that class: it proves the absence, which is the thing being claimed.
+#
+# `expected` is what a correct verifier should answer. "unconfirmed" is never an
+# expected value: it is an abstention, counted separately by the runner.
+#
+# Categories: true_fact, false_fact, real_method, invented_method, time_sensitive
+
+- id: tf-01
+  text: Python 3.0 was released in December 2008.
+  category: true_fact
+  expected: verified
+  label_source: https://www.python.org/downloads/release/python-300/
+
+- id: tf-02
+  text: Git was created by Linus Torvalds in 2005.
+  category: true_fact
+  expected: verified
+  label_source: https://git-scm.com/book/en/v2/Getting-Started-A-Short-History-of-Git
+
+- id: tf-03
+  text: The United Nations was founded in 1945.
+  category: true_fact
+  expected: verified
+  label_source: https://www.un.org/en/about-us
+
+- id: tf-04
+  text: Mount Everest is the highest mountain on Earth above sea level.
+  category: true_fact
+  expected: verified
+  label_source: https://en.wikipedia.org/wiki/Mount_Everest
+
+- id: tf-05
+  text: Mars has two moons, Phobos and Deimos.
+  category: true_fact
+  expected: verified
+  label_source: https://science.nasa.gov/mars/moons/
+
+- id: tf-06
+  text: JavaScript was created by Brendan Eich at Netscape in 1995.
+  category: true_fact
+  expected: verified
+  label_source: https://en.wikipedia.org/wiki/JavaScript
+
+- id: ff-01
+  text: Mount Kilimanjaro is the highest mountain in the world.
+  category: false_fact
+  expected: contradicted
+  label_source: https://en.wikipedia.org/wiki/Mount_Everest
+
+- id: ff-02
+  text: Python was first released publicly in 1999.
+  category: false_fact
+  expected: contradicted
+  label_source: https://en.wikipedia.org/wiki/History_of_Python
+
+- id: ff-03
+  text: Thomas Edison invented the telephone.
+  category: false_fact
+  expected: contradicted
+  label_source: https://en.wikipedia.org/wiki/Invention_of_the_telephone
+
+- id: ff-04
+  text: The Berlin Wall fell in 1991.
+  category: false_fact
+  expected: contradicted
+  label_source: https://en.wikipedia.org/wiki/Berlin_Wall
+
+- id: ff-05
+  text: The Pacific Ocean is the smallest of Earth's oceanic divisions.
+  category: false_fact
+  expected: contradicted
+  label_source: https://en.wikipedia.org/wiki/Pacific_Ocean
+
+- id: ff-06
+  text: The Great Wall of China is visible to the naked eye from the Moon.
+  category: false_fact
+  expected: contradicted
+  label_source: https://en.wikipedia.org/wiki/Great_Wall_of_China
+
+- id: rm-01
+  text: Ruby's Array class has a flatten method.
+  category: real_method
+  expected: verified
+  label_source: https://docs.ruby-lang.org/en/master/Array.html
+
+- id: rm-02
+  text: Ruby's Hash class has a transform_values method.
+  category: real_method
+  expected: verified
+  label_source: https://docs.ruby-lang.org/en/master/Hash.html
+
+- id: rm-03
+  text: ActiveRecord::Relation in Rails provides a find_or_create_by method.
+  category: real_method
+  expected: verified
+  label_source: https://api.rubyonrails.org/classes/ActiveRecord/Relation.html
+
+- id: rm-04
+  text: JavaScript's Array.prototype has a findLast method.
+  category: real_method
+  expected: verified
+  label_source: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array
+
+- id: rm-05
+  text: Python's collections module provides a Counter class.
+  category: real_method
+  expected: verified
+  label_source: https://docs.python.org/3/library/collections.html
+
+- id: im-01
+  text: Ruby's Array class has a compact_sum method.
+  category: invented_method
+  expected: contradicted
+  label_source: https://docs.ruby-lang.org/en/master/Array.html
+
+- id: im-02
+  text: Ruby's Hash class has a transform_pairs method.
+  category: invented_method
+  expected: contradicted
+  label_source: https://docs.ruby-lang.org/en/master/Hash.html
+
+- id: im-03
+  text: ActiveRecord::Relation in Rails provides a find_or_fail_by method.
+  category: invented_method
+  expected: contradicted
+  label_source: https://api.rubyonrails.org/classes/ActiveRecord/Relation.html
+
+- id: im-04
+  text: JavaScript's Array.prototype has a mapUnique method.
+  category: invented_method
+  expected: contradicted
+  label_source: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array
+
+- id: im-05
+  text: Python's list type has a dedupe_sorted method.
+  category: invented_method
+  expected: contradicted
+  label_source: https://docs.python.org/3/tutorial/datastructures.html
+
+- id: ts-01
+  text: Python's current stable release is 3.9.
+  category: time_sensitive
+  expected: contradicted
+  label_source: https://www.python.org/downloads/
+
+- id: ts-02
+  text: The current major version of Ruby on Rails is 6.
+  category: time_sensitive
+  expected: contradicted
+  label_source: https://rubygems.org/gems/rails
+
+- id: ts-03
+  text: Steve Ballmer is the current chief executive officer of Microsoft.
+  category: time_sensitive
+  expected: contradicted
+  label_source: https://news.microsoft.com/leadership/
