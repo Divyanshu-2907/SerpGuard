@@ -64,7 +64,7 @@ There is a browser demo at `GET /` and a JSON service description at `GET /api/v
 ## Stack
 
 Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Attack · RSpec + WebMock ·
-281 specs, no live network calls
+287 specs, no live network calls
 
 ---
 
@@ -130,6 +130,47 @@ the returned snippets stated a current major version, and the verifier will not 
 the model's own knowledge.
 
 None of these were tuned away. The numbers above are the first and only run of this dataset.
+
+### After fixing two bugs the benchmark found
+
+The run above exposed two defects in the absence test, both fixed, then the **10 code claims only**
+were run again on the same day. 14 searches.
+
+| Category | n | Correct | Abstained | Wrong |
+| -------- | - | ------- | --------- | ----- |
+| Real methods | 5 | **5** (was 4) | 0 | 0 |
+| Invented methods | 5 | **3** (was 0) | 2 | 0 |
+
+What changed in the code:
+
+- **A namespace no longer shields an invented method.** The absence test looked for every
+  identifier in the claim and counted any one of them turning up as a mention — so `Relation`,
+  derived from `ActiveRecord::Relation`, stood in for `find_or_fail_by`, because Rails
+  documentation says "Relation" on every page. Probes are now the most specific part of each name,
+  kept only when it has an identifier's shape (an underscore or an internal capital). `Relation`,
+  `prototype` and `sort` are ordinary words and are dropped.
+- **camelCase and dotted names are recognised.** The identifier pattern matched `Foo::Bar` and
+  `snake_case` only, so `mapUnique` was not an identifier at all: no context retry, no absence
+  test. It now also matches camelCase and `Array.prototype.findLast`, with each dotted segment
+  required to start lowercase so that "U.S. Government" stays out.
+
+`im-03` and `im-04` are now `contradicted`, which is what the fixes were for. Three things about
+the rest of the numbers that are worth saying plainly:
+
+- **No real method was called fake.** That is the error this feature must not make, and the
+  dangerous direction stayed at zero. `rm-03`, the one real method that abstained in the first run,
+  came back `verified` this time off a different page.
+- **`im-05` (`dedupe_sorted`) also flipped to `contradicted`, but not because of these fixes.** Its
+  first search happened to return nothing this time, which triggered the context-only retry;
+  in the first run the same claim's first search returned results, so the retry still carried the
+  invented name. Same code path, different luck with Google.
+- **`im-01` and `im-02` still abstain, correctly.** `compact_sum` and `transform_pairs` are open
+  Ruby feature requests, so the names really do appear on the web and the escalation is right to
+  hold off.
+
+**This re-run is less independent than the first.** It uses the same claims that found the bugs, so
+it shows the fixes work on the cases that motivated them — not that accuracy improved on claims the
+code has never seen. The first run's numbers above are left exactly as they were measured.
 
 ### Re-running it
 
@@ -357,7 +398,7 @@ bin/rails db:mongoid:create_indexes
 
 ```sh
 bin/rails server                 # then open http://localhost:3000
-bundle exec rspec                # 281 examples, needs a local mongod
+bundle exec rspec                # 287 examples, needs a local mongod
 bundle exec rubocop              # rubocop-rails-omakase
 bundle exec rails zeitwerk:check # eager-load check, as production does it
 ```
