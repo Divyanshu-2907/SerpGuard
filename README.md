@@ -67,6 +67,12 @@ jobs:
           api-key: ${{ secrets.SERPGUARD_API_KEY }}
 ```
 
+![The comment SerpGuard leaves on a pull request: a table of claims with verdicts, reasons and sources](docs/action-comment.png)
+
+*A real run — [pull request #4](https://github.com/Divyanshu-2907/SerpGuard/pull/4) in this
+repository, checking three claims in one Markdown file. The invented `tally_each_by` is the
+contradicted row; the two real ones carry the source that settled them.*
+
 **The secret.** Create `SERPGUARD_API_KEY` under *Settings → Secrets and variables → Actions → New
 repository secret* in the repo running the workflow. Point `api-url` at your own deployment and use
 your own key; `demo-key` on the public instance is shared and rate-limited, and is there for trying
