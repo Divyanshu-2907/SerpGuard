@@ -64,7 +64,7 @@ There is a browser demo at `GET /` and a JSON service description at `GET /api/v
 ## Stack
 
 Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Attack · RSpec + WebMock ·
-266 specs, no live network calls
+277 specs, no live network calls
 
 ---
 
@@ -178,15 +178,22 @@ Only an explicit `true` counts. A reply that omits the field, or sends `null` or
 as `false` — the wider search and a verdict that never expires — so a sloppy or older reply degrades
 to the previous behaviour rather than to the wrong window.
 
-A flagged claim is searched with SerpApi's `tbs=qdr:y`, Google's past-year filter. If that window
-holds fewer than three usable results then the window is the problem rather than the claim, so
-**one** unfiltered search follows and freshness is pinned off for the rest of the run — a
-reformulated query cannot re-trigger it. That bounds the cost of an uncached claim:
+A flagged claim is searched with SerpApi's `tbs=qdr:y`, Google's past-year filter. Two things can
+go wrong with that window, and each buys exactly one unfiltered search of the same query:
+
+- **Too thin to judge from** — fewer than three usable results inside the year.
+- **Weak verdict** — the filtered evidence produced `unconfirmed`. This one came from a live run:
+  "Ruby's current stable release is 3.1.4" came back `unconfirmed` off past-year results that never
+  discussed Ruby releases at all, where the unfiltered search had answered it outright. A narrower
+  window is not automatically a better one.
+
+Whichever fires, freshness is pinned off for the rest of the run, and the widening is exclusive with
+the query rewrite — so the three second chances cannot stack, and an uncached claim stays bounded:
 
 | | Common path | Worst case |
 | -- | ----------- | ---------- |
-| SerpApi searches | 1 | **3** — past-year, unfiltered fallback, reformulated |
-| Claude calls | 2 — query, verdict | **4** — plus a reformulated query and a second verdict |
+| SerpApi searches | 1 | **3** — past-year, one unfiltered search, one rewritten query |
+| Claude calls | 2 — query, verdict | **4** — plus a rewritten query and a second verdict |
 
 The verdict for a time-sensitive claim is stored with `expires_at` 7 days out; everything else keeps
 a nil `expires_at` and stays cached indefinitely. Expiry is enforced by the cache *query*, not by the
@@ -267,7 +274,7 @@ bin/rails db:mongoid:create_indexes
 
 ```sh
 bin/rails server                 # then open http://localhost:3000
-bundle exec rspec                # 266 examples, needs a local mongod
+bundle exec rspec                # 277 examples, needs a local mongod
 bundle exec rubocop              # rubocop-rails-omakase
 bundle exec rails zeitwerk:check # eager-load check, as production does it
 ```
@@ -508,6 +515,20 @@ It is still an inference rather than a citation, so it is fenced in: `code_api` 
 from `unconfirmed`, only after every query has been tried, never when the search returned nothing,
 and always with `source_url: null` — there is no result to cite for an absence, and inventing one
 would be the very thing the URL check exists to prevent.
+
+**When the search returns nothing at all.** "No results" and "this method does not exist" used to
+look identical from here, and the escalation refuses to read one as the other — so a genuinely
+invented method came back `unconfirmed`. The cause is worth stating because it is not obvious:
+Google answers almost any query, but a query carrying a token that appears on no page filters every
+result out. Checked live before the fix — `ActiveSupport Array sum_each_by method block sum`,
+unquoted, returned zero organic results.
+
+So for a `code_api` claim whose search came back empty, the one rewrite it already spends asks for a
+query with the identifier **removed**: the library, class or module only. If those pages come back
+and none of them mention the name, that silence is the finding and the verdict escalates. If they
+mention it, the name is real and the verdict stands. The context search is what separates "the query
+failed" from "the method is not there", and it costs no extra call — it changes what the rewrite
+asks for, not how many calls there are.
 
 **How the name is matched, after getting this wrong live.** The escalation once declared
 `active_support` absent from six results that all discussed Active Support: prose spells an

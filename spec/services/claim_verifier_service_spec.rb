@@ -1044,6 +1044,108 @@ RSpec.describe ClaimVerifierService do
   # one unfiltered fallback - and it must not stack with the reformulation.
   # A reader cannot tell a knowledge-graph citation from the tenth blue link by
   # looking at the URL, so the verdict says which it was.
+  # The gap this closes: Google returns nothing at all for a query carrying a
+  # token that appears on no page, so a genuinely invented method produced
+  # "no search results" rather than the escalation it exists for. Verified
+  # against the live API before the fix - `sum_each_by ActiveSupport Array
+  # method block sum`, unquoted, returned zero results.
+  describe "a code_api claim whose search returned nothing at all" do
+    let(:claim) do
+      { claim: "ActiveSupport provides an Array method sum_each_by that sums the block results",
+        type: "code_api" }
+    end
+    let(:query) { '"sum_each_by" ActiveSupport Array' }
+    let(:context_query) { "ActiveSupport Array core extensions documentation" }
+
+    let(:context_results) do
+      [ { title: "Active Support Core Extensions",
+          link: "https://guides.rubyonrails.org/active_support_core_extensions.html",
+          snippet: "Extensions to Array: to_sentence, to_formatted_s, from, and in_groups_of." } ]
+    end
+
+    # No verdict call for the first round: zero results short-circuits it.
+    def stub_rounds(second_results)
+      stub_serpapi_no_results_for(query)
+      stub_serpapi_results_for(context_query, second_results)
+      stub_claude_sequence(
+        query,
+        context_query,
+        verdict_json(verdict: "unconfirmed", reason: "Nothing on point here.", source_url: nil)
+      )
+    end
+
+    it "asks for a query that leaves the identifier out" do
+      stub_rounds(context_results)
+
+      described_class.call(claim)
+
+      expect(
+        a_claude_request_where { |body|
+          content = body["messages"].first["content"]
+          content.include?("NO results") &&
+            content.include?("Do NOT include") &&
+            content.include?("sum_each_by")
+        }
+      ).to have_been_made.once
+    end
+
+    it "escalates to contradicted when the library's own pages never mention it" do
+      stub_rounds(context_results)
+
+      result = described_class.call(claim)
+
+      expect(result[:verdict]).to eq("contradicted")
+      expect(result[:source_url]).to be_nil
+      expect(result[:source_type]).to be_nil
+    end
+
+    it "leaves the verdict alone when the context pages do mention it" do
+      stub_rounds([ { title: "Array#sum_each_by", link: "https://example.com/doc",
+                      snippet: "Array#sum_each_by totals the block results." } ])
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "costs one extra query call and one extra search, and no more" do
+      stub_rounds(context_results)
+
+      described_class.call(claim)
+
+      expect(a_serpapi_request).to have_been_made.twice
+      expect(a_search_query_request).to have_been_made.twice
+      # One verdict call in the whole run: the empty first round never asked.
+      expect(a_verdict_request).to have_been_made.once
+    end
+
+    it "does not fire for an ordinary fact claim, which gets the usual rewrite" do
+      fact = { claim: "The Eiffel Tower is located in London", type: "fact" }
+      stub_serpapi_no_results_for(query)
+      stub_serpapi_results_for(context_query, context_results)
+      stub_claude_sequence(
+        query,
+        context_query,
+        verdict_json(verdict: "unconfirmed", reason: "Nothing on point.", source_url: nil)
+      )
+
+      expect(described_class.call(fact)[:verdict]).to eq("unconfirmed")
+      expect(
+        a_claude_request_where { |body| body["messages"].first["content"].include?("Do NOT include") }
+      ).not_to have_been_made
+    end
+
+    it "tells the model the query returned nothing, rather than claiming it went off-subject" do
+      stub_rounds(context_results)
+
+      described_class.call(claim)
+
+      expect(
+        a_claude_request_where { |body|
+          body["messages"].first["content"].include?("a different subject")
+        }
+      ).not_to have_been_made
+    end
+  end
+
   describe "reporting where the citation came from" do
     let(:claim) { { claim: "The Eiffel Tower is located in London", type: "fact" } }
     let(:query) { '"Eiffel Tower" location' }
@@ -1115,6 +1217,112 @@ RSpec.describe ClaimVerifierService do
       # The prompt says origin="answer box"; the API says "answer_box".
       expect(SerpGuard::SerpapiClient::SOURCE_TYPES)
         .to include(described_class.call(claim)[:source_type])
+    end
+  end
+
+  # The past-year window can hide the answer instead of sharpening it. Live:
+  # "Ruby's current stable release is 3.1.4" came back unconfirmed off filtered
+  # results that never discussed Ruby releases, where the unfiltered search had
+  # answered it outright.
+  describe "widening the window after a weak verdict" do
+    let(:claim) { { claim: "Ruby's current stable release is 3.1.4", type: "fact", time_sensitive: true } }
+    let(:query) { '"Ruby" stable release' }
+
+    def off_topic(count)
+      Array.new(count) do |i|
+        { title: "Ruby jewellery #{i}", link: "https://gems.example.com/#{i}",
+          snippet: "A ruby is a pink to blood-red gemstone." }
+      end
+    end
+
+    def on_topic
+      [ { title: "Ruby Releases", link: "https://www.ruby-lang.org/en/downloads/releases/",
+          snippet: "Ruby 3.4.1 is the current stable release." } ]
+    end
+
+    it "spends one unfiltered search on the same query and re-judges" do
+      stub_serpapi_payload(results: off_topic(5), query: query, fresh: true)
+      stub_serpapi_payload(results: on_topic, query: query, fresh: false)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Results are about gemstones.", source_url: nil),
+        verdict_json(verdict: "contradicted", reason: "The release page lists 3.4.1.",
+                     source_url: "https://www.ruby-lang.org/en/downloads/releases/")
+      )
+
+      result = described_class.call(claim)
+
+      expect(result[:verdict]).to eq("contradicted")
+      expect(result[:source_url]).to eq("https://www.ruby-lang.org/en/downloads/releases/")
+      expect(a_fresh_serpapi_request).to have_been_made.once
+      expect(an_unfiltered_serpapi_request).to have_been_made.once
+    end
+
+    it "asks for no query rewrite, so the two second chances cannot stack" do
+      stub_serpapi_payload(results: off_topic(5), query: query, fresh: true)
+      stub_serpapi_payload(results: on_topic, query: query, fresh: false)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Gemstones.", source_url: nil),
+        verdict_json(verdict: "contradicted", reason: "3.4.1 is current.",
+                     source_url: "https://www.ruby-lang.org/en/downloads/releases/")
+      )
+
+      described_class.call(claim)
+
+      # One query call, two verdict calls, two searches: inside the ceiling.
+      expect(a_search_query_request).to have_been_made.once
+      expect(a_verdict_request).to have_been_made.twice
+      expect(a_serpapi_request).to have_been_made.twice
+    end
+
+    it "keeps the filtered verdict when the unfiltered search adds nothing" do
+      stub_serpapi_payload(results: off_topic(5), query: query, fresh: true)
+      stub_serpapi_payload(results: [], query: query, fresh: false)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Results are about gemstones.", source_url: nil)
+      )
+
+      expect(described_class.call(claim)[:verdict]).to eq("unconfirmed")
+    end
+
+    it "does not fire for a claim that is not time-sensitive" do
+      stale = { claim: "Ruby 3.3 was released in December 2023", type: "fact", time_sensitive: false }
+      stub_serpapi_payload(results: off_topic(5), query: query, fresh: false)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Gemstones.", source_url: nil),
+        "reworded",
+        verdict_json(verdict: "unconfirmed", reason: "Still gemstones.", source_url: nil)
+      )
+      stub_serpapi_payload(results: off_topic(1), query: "reworded")
+
+      described_class.call(stale)
+
+      # Whatever else happens, no filtered search and no repeat of this query.
+      expect(a_fresh_serpapi_request).not_to have_been_made
+      expect(a_serpapi_request_for(query)).to have_been_made.once
+    end
+
+    it "does not fire when the thin-window fallback has already widened the search" do
+      # One filtered result, so #gather_evidence falls back on count and pins
+      # freshness off. The verdict is still weak afterwards, but the unfiltered
+      # search it would ask for has already been paid for.
+      stub_serpapi_payload(results: off_topic(1), query: query, fresh: true)
+      stub_serpapi_payload(results: off_topic(2), query: query, fresh: false)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Gemstones.", source_url: nil)
+      )
+
+      described_class.call(claim)
+
+      # Twice, not three times: the filtered search and the count-based
+      # fallback, with no second unfiltered search on top.
+      expect(a_serpapi_request_for(query)).to have_been_made.twice
+      expect(a_serpapi_request).to have_been_made.twice
+      expect(a_verdict_request).to have_been_made.once
     end
   end
 

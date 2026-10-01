@@ -394,7 +394,7 @@
       <div class="card">
         <h3>Claims that expire</h3>
         <p>A claim that only holds for now is searched inside Google's past year (<code>tbs=qdr:y</code>) and tagged <b>fresh results</b>.</p>
-        <span class="detail">Fewer than three results in that window falls back to one unfiltered search. Worst case per claim: 3 searches, 4 Claude calls. Its verdict is cached for 7 days, not forever.</span>
+        <span class="detail">A window that is too thin, or that only yields <code>unconfirmed</code>, buys one unfiltered search of the same query. Worst case per claim: 3 searches, 4 Claude calls. Its verdict is cached for 7 days, not forever.</span>
       </div>
       <div class="card">
         <h3>Unreadable ≠ unconfirmed</h3>
@@ -409,7 +409,7 @@
       <div class="card">
         <h3>A method that isn't there</h3>
         <p>For a <code>code_api</code> claim whose method name appears in no result, the verdict is <code>contradicted</code>.</p>
-        <span class="detail">A real method name returns something for a search of its own name. Never fires on zero results — that means the query failed.</span>
+        <span class="detail">A real method name returns something for a search of its own name. Never fires on zero results — that means the query failed, so the one rewrite searches the library without the name and judges the silence on <em>its</em> results.</span>
       </div>
       <div class="card">
         <h3>Verdicts are cached</h3>
@@ -418,7 +418,7 @@
       </div>
       <div class="card">
         <h3>Retries, once</h3>
-        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A query whose results come back about a different subject gets one rewrite, and a thin past-year window one unfiltered fallback — neither can stack.</p>
+        <p>Timeouts, connection resets, 429s and 5xx get exactly one retry, shared by both API clients. A query whose results come back about a different subject gets one rewrite; a past-year window that is too thin, or that produced <code>unconfirmed</code>, gets one unfiltered search — and none of them can stack.</p>
         <span class="detail">A 4xx that cannot succeed on a second identical attempt is never sent twice. 5s connect / 30s read; <code>Retry-After</code> honoured but capped at 2s.</span>
       </div>
     </div>
@@ -455,7 +455,7 @@
   </section>
 
   <footer>
-    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 266 specs</span>
+    <span>Rails 8.1 · Ruby 3.3 · Mongoid · Claude · SerpApi · rack-attack · 277 specs</span>
     <span><a href="https://github.com/Divyanshu-2907/SerpGuard">Divyanshu-2907/SerpGuard</a></span>
   </footer>
 

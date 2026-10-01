@@ -17,8 +17,15 @@
 #   3. Claude weighs the claim against the returned snippets and rules on it
 #
 # Three upstream calls on the common path. The worst case is bounded at
-# 3 SerpApi searches and 4 Claude calls per claim: see #gather_evidence for
-# the freshness fallback and #reformulation_warranted? for the one rewrite.
+# 3 SerpApi searches and 4 Claude calls per claim, across three conditional
+# second chances that cannot stack:
+#
+#   #gather_evidence         a past-year window too thin to judge from gets one
+#                            unfiltered search
+#   #widen_window_warranted? an `unconfirmed` verdict off filtered evidence gets
+#                            one unfiltered search of the same query
+#   #reformulation_warranted? results about a different subject, or none at all
+#                            for a code_api claim, get one rewritten query
 #
 # The rule that shapes the whole class: a verdict we could not read is NOT
 # "unconfirmed". "Unconfirmed" is a real finding that means the evidence was
@@ -206,12 +213,20 @@ class ClaimVerifierService
     examined = results.dup
     outcome = verdict_for(results)
 
-    # One second chance, and only on the unlucky path: a query that read fine but
-    # that Google answered with results about something else entirely. Costs an
-    # extra query call, search and verdict call when it fires, and nothing at all
-    # when it does not. See #reformulation_warranted?.
-    if reformulation_warranted?(outcome, results)
-      second_query = reformulated_query
+    # Exactly one second chance, and the two kinds are deliberately exclusive so
+    # neither can stack on the other. Both cost nothing on the common path.
+    if widen_window_warranted?(outcome)
+      # The past-year window answered "we cannot tell". Same query, no filter:
+      # the window, not the claim, was the problem. See #widen_window_warranted?.
+      @use_fresh = false
+      wider = search_for_evidence(search_query, fresh: false)
+
+      if wider.any?
+        examined.concat(wider)
+        outcome = verdict_for(wider)
+      end
+    elsif reformulation_warranted?(outcome, results)
+      second_query = reformulated_query(results)
       # Reuses whatever freshness mode produced evidence the first time, so a
       # reformulation cannot re-trigger the fallback and stack another search.
       second_results = second_query ? search_for_evidence(second_query, fresh: @use_fresh) : []
@@ -282,8 +297,12 @@ class ClaimVerifierService
   # different subject. Returns nil rather than raising: we already hold a usable
   # `unconfirmed` verdict at this point, and turning that into a 500 because the
   # second query came back blank would be a downgrade.
-  def reformulated_query
+  # @param results [Array] the evidence the first round produced, which decides
+  #   which of the two rewrite prompts to send
+  def reformulated_query(results)
     @reformulated = true
+    @context_only = context_retry_warranted?(results)
+    @first_round_empty = results.empty?
 
     response = ask_claude(
       system: QUERY_SYSTEM_PROMPT,
@@ -300,6 +319,8 @@ class ClaimVerifierService
   end
 
   def reformulation_prompt
+    return context_only_prompt if @context_only
+
     <<~PROMPT
       <claim type="#{type}">
       #{statement}
@@ -307,8 +328,7 @@ class ClaimVerifierService
 
       <failed_query>#{search_query}</failed_query>
 
-      That query returned results about a different subject - none of them even mentioned
-      #{distinctive_terms.first.inspect}. It was too loose or ambiguous.
+      #{failed_query_diagnosis}
 
       Write a DIFFERENT query for the same claim. Put the distinctive entity in double
       quotes so the search cannot drift, drop any word that could pull the results toward
@@ -316,14 +336,80 @@ class ClaimVerifierService
     PROMPT
   end
 
+  # Why the first query is being replaced. Telling the model the results were
+  # off-subject when there were no results at all would be a small lie that
+  # steers the rewrite the wrong way.
+  def failed_query_diagnosis
+    if @first_round_empty
+      "That query returned no results at all. It was too narrow, or too exact a phrase."
+    else
+      "That query returned results about a different subject - none of them even " \
+        "mentioned #{distinctive_terms.first.inspect}. It was too loose or ambiguous."
+    end
+  end
+
+  # Used only after a `code_api` claim's search came back empty. Asking for the
+  # same name again would return the same nothing, so this asks for the context
+  # instead - which is what makes the absence readable either way.
+  def context_only_prompt
+    identifier = code_identifiers.max_by(&:length)
+
+    <<~PROMPT
+      <claim type="#{type}">
+      #{statement}
+      </claim>
+
+      <failed_query>#{search_query}</failed_query>
+
+      That query returned NO results at all. Google answers almost any query, so a query
+      containing a name that appears on no page filters every result out - which means we
+      still cannot tell whether #{identifier.inspect} exists.
+
+      Write a DIFFERENT query that searches the SURROUNDING CONTEXT only: the library,
+      class, module or language the claim is about, plus a word like documentation or
+      methods if it helps. Do NOT include #{identifier.inspect}, or any part of it, in the
+      query - the point is to see what the library's own pages say.
+    PROMPT
+  end
+
   # True when the verdict we have is the weakest one AND the results never even
   # mention the thing the claim is about - which means the query missed, not that
   # the evidence is genuinely thin. Fires at most once per claim.
+  # A time-sensitive claim is searched inside Google's past year, and that
+  # window can hide the answer rather than sharpen it: "Ruby's current stable
+  # release is 3.1.4" came back `unconfirmed` from the filtered search off
+  # results that never discussed Ruby releases at all, where the unfiltered
+  # search had answered it outright.
+  #
+  # So an `unconfirmed` verdict off filtered evidence buys one unfiltered search
+  # of the same query. `@use_fresh` is only still true here if no unfiltered
+  # search has run yet (#gather_evidence pins it off when its own fallback
+  # fires), so this cannot fire twice, and it is exclusive with the query
+  # rewrite - which keeps the ceiling at 3 searches and 4 Claude calls.
+  def widen_window_warranted?(outcome)
+    @use_fresh && outcome[:verdict] == "unconfirmed"
+  end
+
   def reformulation_warranted?(outcome, results)
     return false if @reformulated
     return false unless outcome[:verdict] == "unconfirmed"
+    return true if context_retry_warranted?(results)
 
     !results_cover_claim?(results)
+  end
+
+  # Zero results for a `code_api` claim is the one case where the query itself
+  # is the suspect. Google answers almost anything, but a query carrying a token
+  # that appears on no page filters every result out - so "no results" and "this
+  # method does not exist" look identical, and #escalate_unfindable_code_api
+  # refuses to read one as the other.
+  #
+  # The way out is to search the context without the identifier: if the
+  # library's own pages come back and none of them mention the name, that
+  # silence is the finding. If they do mention it, the name is real and the
+  # verdict stays where it is.
+  def context_retry_warranted?(results)
+    type == "code_api" && results.empty? && code_identifiers.any?
   end
 
   # Does the evidence mention any of the claim's distinctive terms at all?
