@@ -1,0 +1,37 @@
+name: SerpGuard demo
+
+# Runs this repository's own action against its own pull requests, which is
+# both the demo and the only end-to-end test the action gets. Every run spends
+# Claude and SerpApi credits, so it is deliberately limited to Markdown under
+# docs/ and to one file.
+on:
+  pull_request:
+    paths:
+      - "docs/**.md"
+      - "action.yml"
+      - ".github/workflows/serpguard-demo.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: serpguard-demo-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fact-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The action diffs base against head, so it needs the history.
+          fetch-depth: 0
+
+      - name: Fact-check the changed docs
+        uses: ./
+        with:
+          api-key: ${{ secrets.SERPGUARD_API_KEY }}
+          paths: "docs/**.md"
+          max-files: "1"
+          max-chars: "2000"

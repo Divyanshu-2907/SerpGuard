@@ -10,7 +10,8 @@ will believe it.
 
 Built for the SerpApi India Hackathon 2026 — AI Agents track.
 
-**Live:** <https://serpguard.onrender.com>
+**Live:** <https://serpguard.onrender.com> · **In your repo:**
+[a GitHub Action for pull requests](#use-it-in-your-repo)
 
 ---
 
@@ -36,6 +37,67 @@ curl -X POST https://serpguard.onrender.com/api/v1/checks -d '{"text":"x"}'   # 
 > per claim. Send the same text twice and the claims usually come back `cached: true` in a second or
 > two, having made no upstream calls - "usually" because the cache matches claim text, and extraction
 > can word the same claim differently on a re-run.
+
+---
+
+## Use it in your repo
+
+A composite action that checks the Markdown files a pull request changes and leaves one comment
+with the verdicts. Add this workflow:
+
+```yaml
+name: Fact check
+
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  serpguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the action diffs base against head
+
+      - uses: Divyanshu-2907/SerpGuard@v1
+        with:
+          api-key: ${{ secrets.SERPGUARD_API_KEY }}
+```
+
+**The secret.** Create `SERPGUARD_API_KEY` under *Settings → Secrets and variables → Actions → New
+repository secret* in the repo running the workflow. Point `api-url` at your own deployment and use
+your own key; `demo-key` on the public instance is shared and rate-limited, and is there for trying
+the API by hand rather than for CI.
+
+| Input | Default | What it does |
+| ----- | ------- | ------------ |
+| `api-key` | *required* | Your SerpGuard key. Masked in the log — pass a secret, never a literal |
+| `api-url` | `https://serpguard.onrender.com` | Your deployment |
+| `paths` | `*.md` | Space-separated globs; matched against the whole path |
+| `max-files` | `3` | Files per run |
+| `max-chars` | `5000` | Characters sent per file |
+| `fail-on-contradicted` | `false` | Comment only by default |
+
+**It costs money per run**, which is what `max-files` and `max-chars` are for: each file is two
+Claude calls plus at least one paid Google search per claim found in it. Start small.
+
+What it does and does not do:
+
+- One comment per pull request, edited in place on later pushes rather than piling up — it finds its
+  previous comment by a hidden marker.
+- Contradicted claims are listed first; `unconfirmed` means the search found nothing decisive, not
+  that the claim is false.
+- Deleted files are skipped, and so are files past `max-files`, with a note saying so.
+- A pull request **from a fork** gets no secrets from GitHub, so there is nothing to check with. The
+  run says so and succeeds rather than failing red.
+- A bad key fails the job loudly (401); a rate limit, a timeout or a sleeping free instance skips
+  that file with a note and carries on.
+
+Outputs `checked`, `contradicted`, `unconfirmed` and `verified` if you want to gate on them
+yourself.
 
 ---
 

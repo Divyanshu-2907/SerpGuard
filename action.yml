@@ -1,0 +1,368 @@
+name: SerpGuard fact check
+description: >-
+  Fact-check the claims in changed Markdown files against live Google results
+  and report them in one pull request comment.
+author: Divyanshu-2907
+
+branding:
+  icon: search
+  color: blue
+
+inputs:
+  api-key:
+    description: >-
+      SerpGuard API key. Pass a repository secret, never a literal - the value
+      is masked in the log, but a literal in the workflow file is public.
+    required: true
+  api-url:
+    description: Base URL of the SerpGuard service.
+    required: false
+    default: https://serpguard.onrender.com
+  paths:
+    description: >-
+      Space-separated glob patterns. A changed file is checked when it matches
+      any of them. Patterns are matched against the whole path, so "*.md"
+      includes docs/guide.md.
+    required: false
+    default: "*.md"
+  max-files:
+    description: >-
+      Most files to check in one run. Each file costs Claude calls and at least
+      one paid Google search per claim found in it, so this is a spend limit.
+    required: false
+    default: "3"
+  max-chars:
+    description: Characters sent per file. Anything past this is not submitted.
+    required: false
+    default: "5000"
+  fail-on-contradicted:
+    description: >-
+      Fail the job when a claim comes back contradicted. Off by default: the
+      comment is the point, and a live search is not something to gate a merge
+      on until you trust it.
+    required: false
+    default: "false"
+  github-token:
+    description: Token used to post the comment. The default is almost always right.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  checked:
+    description: Number of claims checked.
+    value: ${{ steps.check.outputs.checked }}
+  contradicted:
+    description: Number of claims a search contradicted.
+    value: ${{ steps.check.outputs.contradicted }}
+  unconfirmed:
+    description: Number of claims the search could not settle.
+    value: ${{ steps.check.outputs.unconfirmed }}
+  verified:
+    description: Number of claims a search supported.
+    value: ${{ steps.check.outputs.verified }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the changed Markdown files
+      id: check
+      shell: bash
+      env:
+        # Everything the scripts read comes in through env rather than ${{ }}
+        # interpolation, so no input can end up as shell source.
+        SERPGUARD_API_KEY: ${{ inputs.api-key }}
+        SERPGUARD_API_URL: ${{ inputs.api-url }}
+        SERPGUARD_PATHS: ${{ inputs.paths }}
+        SERPGUARD_MAX_FILES: ${{ inputs.max-files }}
+        SERPGUARD_MAX_CHARS: ${{ inputs.max-chars }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        EVENT_NAME: ${{ github.event_name }}
+        WORK_DIR: ${{ runner.temp }}/serpguard
+      run: |
+        set -euo pipefail
+
+        if [ -n "${SERPGUARD_API_KEY}" ]; then
+          echo "::add-mask::${SERPGUARD_API_KEY}"
+        fi
+
+        if [ "${EVENT_NAME}" != "pull_request" ] && [ "${EVENT_NAME}" != "pull_request_target" ]; then
+          echo "::error::SerpGuard runs on pull_request events; this run is ${EVENT_NAME}."
+          exit 1
+        fi
+
+        # A pull request from a fork gets no secrets, so there is no key to check
+        # with. That is GitHub protecting the key, not a failure worth a red X.
+        if [ -z "${SERPGUARD_API_KEY}" ]; then
+          echo "::notice::No API key available, so nothing was checked. Pull requests from forks do not receive secrets - run SerpGuard on the branch, or add the key to the fork."
+          {
+            echo "checked=0"
+            echo "contradicted=0"
+            echo "unconfirmed=0"
+            echo "verified=0"
+            echo "skipped=no_api_key"
+          } >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        mkdir -p "${WORK_DIR}"
+        : > "${WORK_DIR}/rows.jsonl"
+        : > "${WORK_DIR}/notes.txt"
+
+        # The base commit is only guaranteed to be here with a full checkout.
+        if ! git cat-file -e "${BASE_SHA}^{commit}" 2> /dev/null; then
+          git fetch --no-tags --depth=1 origin "${BASE_SHA}" 2> /dev/null ||
+            echo "::warning::Could not fetch the base commit. Check out with fetch-depth: 0 so the diff can be computed."
+        fi
+
+        # --diff-filter=d leaves out deleted files: there is nothing to read.
+        changed=$(git diff --name-only --diff-filter=d "${BASE_SHA}" "${HEAD_SHA}" || true)
+
+        matched=""
+        while IFS= read -r file; do
+          [ -n "${file}" ] || continue
+          for pattern in ${SERPGUARD_PATHS}; do
+            # shellcheck disable=SC2254  # the glob is the point of the input
+            case "${file}" in
+              ${pattern})
+                matched="${matched}${file}"$'\n'
+                break
+                ;;
+            esac
+          done
+        done <<< "${changed}"
+
+        matched=$(printf '%s' "${matched}" | sed '/^$/d')
+
+        if [ -z "${matched}" ]; then
+          echo "No changed files matched ${SERPGUARD_PATHS}. Nothing to check."
+          {
+            echo "checked=0"
+            echo "contradicted=0"
+            echo "unconfirmed=0"
+            echo "verified=0"
+            echo "skipped=no_matching_files"
+          } >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+
+        total=$(printf '%s\n' "${matched}" | wc -l | tr -d ' ')
+        files=$(printf '%s\n' "${matched}" | head -n "${SERPGUARD_MAX_FILES}")
+
+        if [ "${total}" -gt "${SERPGUARD_MAX_FILES}" ]; then
+          echo "Checking the first ${SERPGUARD_MAX_FILES} of ${total} matching files (max-files)."
+          printf 'Checked the first %s of %s matching files (max-files).\n' \
+            "${SERPGUARD_MAX_FILES}" "${total}" >> "${WORK_DIR}/notes.txt"
+        fi
+
+        # The free instance sleeps after 15 minutes. Waking it on /health costs
+        # nothing and keeps the first real request from timing out.
+        curl --silent --show-error --max-time 90 --output /dev/null \
+          "${SERPGUARD_API_URL}/api/v1/health" ||
+          echo "::warning::The service did not answer /api/v1/health. If it is a free instance it may be waking up."
+
+        while IFS= read -r file; do
+          [ -n "${file}" ] || continue
+          [ -f "${file}" ] || continue
+
+          head -c "${SERPGUARD_MAX_CHARS}" "${file}" > "${WORK_DIR}/body.txt"
+          if [ ! -s "${WORK_DIR}/body.txt" ]; then
+            echo "Skipping ${file}: empty."
+            continue
+          fi
+
+          jq -n --rawfile text "${WORK_DIR}/body.txt" '{text: $text}' > "${WORK_DIR}/payload.json"
+
+          echo "Checking ${file} ..."
+          status=$(
+            curl --silent --show-error --max-time 300 \
+              --output "${WORK_DIR}/response.json" --write-out '%{http_code}' \
+              --request POST "${SERPGUARD_API_URL}/api/v1/checks" \
+              --header 'content-type: application/json' \
+              --header "X-API-Key: ${SERPGUARD_API_KEY}" \
+              --data-binary "@${WORK_DIR}/payload.json"
+          ) || status="000"
+
+          case "${status}" in
+            200)
+              jq -c --arg file "${file}" '(.claims // [])[] | {file: $file} + .' \
+                "${WORK_DIR}/response.json" >> "${WORK_DIR}/rows.jsonl"
+              message=$(jq -r '.message // empty' "${WORK_DIR}/response.json")
+              if [ -n "${message}" ]; then
+                printf '%s: %s\n' "${file}" "${message}" >> "${WORK_DIR}/notes.txt"
+              fi
+              ;;
+            401 | 403)
+              echo "::error::SerpGuard rejected the API key (HTTP ${status}). Check the secret you passed as api-key."
+              exit 1
+              ;;
+            429)
+              echo "::warning::Rate limited (HTTP 429) while checking ${file}. Skipped."
+              printf '%s: skipped, the service rate-limited this run (HTTP 429).\n' \
+                "${file}" >> "${WORK_DIR}/notes.txt"
+              ;;
+            000)
+              echo "::warning::No response while checking ${file} - a timeout, or the service is asleep."
+              printf '%s: skipped, no response from the service (timeout, or a sleeping free instance).\n' \
+                "${file}" >> "${WORK_DIR}/notes.txt"
+              ;;
+            502 | 503 | 504)
+              echo "::warning::The service was unavailable (HTTP ${status}) while checking ${file}. Skipped."
+              printf '%s: skipped, the service was unavailable (HTTP %s).\n' \
+                "${file}" "${status}" >> "${WORK_DIR}/notes.txt"
+              ;;
+            *)
+              detail=$(jq -r '.error.message // empty' "${WORK_DIR}/response.json" 2> /dev/null || true)
+              echo "::warning::HTTP ${status} while checking ${file}. ${detail}"
+              printf '%s: skipped, HTTP %s. %s\n' "${file}" "${status}" "${detail}" >> "${WORK_DIR}/notes.txt"
+              ;;
+          esac
+        done <<< "${files}"
+
+        count() { grep -c "\"verdict\":\"$1\"" "${WORK_DIR}/rows.jsonl" || true; }
+
+        checked=$(wc -l < "${WORK_DIR}/rows.jsonl" | tr -d ' ')
+        {
+          echo "checked=${checked}"
+          echo "contradicted=$(count contradicted)"
+          echo "unconfirmed=$(count unconfirmed)"
+          echo "verified=$(count verified)"
+          echo "skipped="
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Write the pull request comment
+      if: ${{ always() && steps.check.outputs.checked != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        SERVER_URL: ${{ github.server_url }}
+        RUN_ID: ${{ github.run_id }}
+        CHECKED: ${{ steps.check.outputs.checked }}
+        CONTRADICTED: ${{ steps.check.outputs.contradicted }}
+        UNCONFIRMED: ${{ steps.check.outputs.unconfirmed }}
+        VERIFIED: ${{ steps.check.outputs.verified }}
+        SKIPPED: ${{ steps.check.outputs.skipped }}
+        WORK_DIR: ${{ runner.temp }}/serpguard
+      run: |
+        set -euo pipefail
+
+        marker='<!-- serpguard-report -->'
+        body="${WORK_DIR}/comment.md"
+
+        {
+          echo "${marker}"
+          echo "## SerpGuard fact check"
+          echo ""
+        } > "${body}"
+
+        if [ "${SKIPPED}" = "no_api_key" ]; then
+          {
+            echo "Nothing was checked: this pull request comes from a fork, so GitHub did not"
+            echo "pass the \`SERPGUARD_API_KEY\` secret to the workflow."
+          } >> "${body}"
+        elif [ "${SKIPPED}" = "no_matching_files" ]; then
+          echo "No changed Markdown files to check." >> "${body}"
+        else
+          {
+            printf '**%s claim(s) checked** - %s contradicted, %s unconfirmed, %s verified.\n' \
+              "${CHECKED}" "${CONTRADICTED}" "${UNCONFIRMED}" "${VERIFIED}"
+            echo ""
+          } >> "${body}"
+
+          if [ -s "${WORK_DIR}/rows.jsonl" ]; then
+            {
+              echo "| | File | Claim | Verdict | Why | Source |"
+              echo "| - | ---- | ----- | ------- | --- | ------ |"
+
+              # Contradicted first: it is the only row that asks for a decision.
+              jq -rs '
+              def clean: (. // "") | gsub("[\n\r|]"; " ") | gsub("\\s+"; " ");
+              def cut($n): clean | if (. | length) > $n then (.[0:$n] + "...") else . end;
+              def rank: if .verdict == "contradicted" then 0
+                        elif .verdict == "unconfirmed" then 1
+                        else 2 end;
+              def mark: if .verdict == "contradicted" then "!"
+                        elif .verdict == "unconfirmed" then "?"
+                        else "ok" end;
+              sort_by(rank, .file)
+              | map(
+                  "| " + mark
+                  + " | `" + (.file | clean) + "`"
+                  + " | " + (.claim | cut(160))
+                  + " | **" + (.verdict | clean) + "**"
+                  + " | " + (.reason | cut(180))
+                  + " | " + (if (.source_url // "") == "" then "none" else "[link](" + .source_url + ")" end)
+                  + " |"
+                )
+              | .[]
+              ' "${WORK_DIR}/rows.jsonl"
+              echo ""
+            } >> "${body}"
+          fi
+
+          if [ -s "${WORK_DIR}/notes.txt" ]; then
+            {
+              echo "<details><summary>Notes</summary>"
+              echo ""
+              sed 's/^/- /' "${WORK_DIR}/notes.txt"
+              echo ""
+              echo "</details>"
+              echo ""
+            } >> "${body}"
+          fi
+
+          {
+            echo "<sub>Each verdict comes from a live Google search of that claim, judged against the"
+            echo "returned snippets only - never from a model's own knowledge. \`unconfirmed\` means the"
+            echo "search found nothing decisive, not that the claim is false."
+            echo "[Run log](${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}) - [SerpGuard](https://github.com/Divyanshu-2907/SerpGuard)</sub>"
+          } >> "${body}"
+        fi
+
+        api="${SERVER_URL//https:\/\/github.com/https://api.github.com}"
+        if [ "${api}" = "${SERVER_URL}" ]; then
+          api="${SERVER_URL}/api/v3"
+        fi
+
+        # One comment per pull request: find the previous report by its marker
+        # and edit it, so a long review is not buried under repeated bots.
+        existing=$(
+          curl --silent --show-error --max-time 60 \
+            --header "authorization: Bearer ${GH_TOKEN}" \
+            --header 'accept: application/vnd.github+json' \
+            "${api}/repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" |
+            jq -r --arg marker "${marker}" \
+              'map(select(.body | startswith($marker))) | last | .id // empty'
+        )
+
+        jq -n --rawfile body "${body}" '{body: $body}' > "${WORK_DIR}/comment.json"
+
+        if [ -n "${existing}" ]; then
+          echo "Updating comment ${existing}."
+          curl --silent --show-error --max-time 60 --output /dev/null \
+            --request PATCH \
+            --header "authorization: Bearer ${GH_TOKEN}" \
+            --header 'accept: application/vnd.github+json' \
+            --data-binary "@${WORK_DIR}/comment.json" \
+            "${api}/repos/${REPO}/issues/comments/${existing}"
+        else
+          echo "Posting a new comment."
+          curl --silent --show-error --max-time 60 --output /dev/null \
+            --request POST \
+            --header "authorization: Bearer ${GH_TOKEN}" \
+            --header 'accept: application/vnd.github+json' \
+            --data-binary "@${WORK_DIR}/comment.json" \
+            "${api}/repos/${REPO}/issues/${PR_NUMBER}/comments"
+        fi
+
+    - name: Fail on a contradicted claim
+      if: ${{ inputs.fail-on-contradicted == 'true' && steps.check.outputs.contradicted != '0' && steps.check.outputs.contradicted != '' }}
+      shell: bash
+      env:
+        CONTRADICTED: ${{ steps.check.outputs.contradicted }}
+      run: |
+        set -euo pipefail
+        echo "::error::${CONTRADICTED} claim(s) were contradicted by a live search. See the pull request comment."
+        exit 1

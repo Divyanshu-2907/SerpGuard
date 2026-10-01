@@ -50,6 +50,55 @@ jobs:
       - name: Lint code for consistent style
         run: bin/rubocop -f github
 
+  actions-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint the workflows
+        run: |
+          curl -sSfL -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint
+
+      - name: Shellcheck the composite action's shell
+        run: |
+          # actionlint reads workflows, not action.yml, so the action's own
+          # scripts are pulled out and checked here. shellcheck is preinstalled
+          # on GitHub runners.
+          mkdir -p tmp/action-shell
+          python3 - <<'PY'
+          import io, os, re
+
+          lines = io.open("action.yml", encoding="utf-8").read().split("\n")
+          blocks, current = [], None
+
+          for line in lines:
+              if current is not None:
+                  if line.strip() and not line.startswith(" " * current["indent"]):
+                      blocks.append(current)
+                      current = None
+                  else:
+                      current["lines"].append(line[current["indent"]:] if line.strip() else "")
+                      continue
+              match = re.match(r"^(\s*)run: \|\s*$", line)
+              if match:
+                  current = {"indent": len(match.group(1)) + 2, "lines": []}
+
+          if current is not None:
+              blocks.append(current)
+
+          for index, block in enumerate(blocks, 1):
+              path = os.path.join("tmp/action-shell", f"run_{index}.sh")
+              io.open(path, "w", encoding="utf-8", newline="\n").write(
+                  "#!/usr/bin/env bash\n" + "\n".join(block["lines"]).rstrip() + "\n"
+              )
+          print(f"extracted {len(blocks)} run block(s)")
+          PY
+          shellcheck --shell=bash --severity=style tmp/action-shell/*.sh
+
   test:
     runs-on: ubuntu-latest
 
