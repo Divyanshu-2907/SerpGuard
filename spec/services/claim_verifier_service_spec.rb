@@ -1224,6 +1224,88 @@ RSpec.describe ClaimVerifierService do
   # "Ruby's current stable release is 3.1.4" came back unconfirmed off filtered
   # results that never discussed Ruby releases, where the unfiltered search had
   # answered it outright.
+  # "current", "latest" and "as of" look like filler, and for a dated fact they
+  # are. For a claim about what is true now they are the whole question - a live
+  # run searched "Ruby" stable release for "Ruby's current stable release is
+  # 3.1.4" and got a page listing every version ever shipped.
+  describe "words like \"current\" in the generated query" do
+    let(:fresh_claim) do
+      { claim: "Ruby's current stable release is 3.1.4", type: "fact", time_sensitive: true }
+    end
+    let(:fixed_claim) do
+      { claim: "Ruby 3.3 was released in December 2023", type: "fact", time_sensitive: false }
+    end
+    let(:query) { '"Ruby" current stable release' }
+
+    def a_query_prompt_saying(text)
+      a_claude_request_where do |body|
+        body["system"].include?("one Google search query") && body["system"].include?(text)
+      end
+    end
+
+    before do
+      stub_serpapi_results(search_results)
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "contradicted", reason: "The release page lists 3.4.1.",
+                     source_url: "https://www.ruby-lang.org/en/downloads/releases/")
+      )
+    end
+
+    it "asks the model to keep them for a time-sensitive claim" do
+      described_class.call(fresh_claim)
+
+      expect(a_query_prompt_saying('KEEP "current"')).to have_been_made.once
+      expect(a_query_prompt_saying('Drop "current"')).not_to have_been_made
+    end
+
+    it "asks the model to drop them for a claim about a fixed fact" do
+      described_class.call(fixed_claim)
+
+      expect(a_query_prompt_saying('Drop "current"')).to have_been_made.once
+      expect(a_query_prompt_saying('KEEP "current"')).not_to have_been_made
+    end
+
+    it "no longer lists them as filler for either kind" do
+      described_class.call(fresh_claim)
+
+      # The shared half of the prompt stays neutral; only the appended rule decides.
+      expect(
+        a_claude_request_where do |body|
+          body["system"].include?("Drop filler and vague qualifiers") &&
+            body["system"][/Drop filler and vague qualifiers.*?\n\n/m].include?("current")
+        end
+      ).not_to have_been_made
+    end
+
+    it "writes a rewritten query under the same rule as the first one" do
+      # The one path where a time-sensitive claim still reaches the rewrite: a
+      # thin past-year window spends the unfiltered search, and the evidence
+      # that comes back is about something else. The rule must not switch
+      # halfway through a run.
+      entity_claim = { claim: "Ruby on Rails currently ships version 7.1.0", type: "fact",
+                       time_sensitive: true }
+      off_topic = Array.new(3) do |i|
+        { title: "Ruby gemstone #{i}", link: "https://gems.example.com/#{i}",
+          snippet: "A ruby is a red gemstone." }
+      end
+      stub_serpapi_payload(results: off_topic.first(1), query: query, fresh: true)
+      stub_serpapi_payload(results: off_topic, query: query, fresh: false)
+      stub_serpapi_payload(results: search_results, query: "reworded")
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Gemstones.", source_url: nil),
+        "reworded",
+        verdict_json(verdict: "contradicted", reason: "7.2 is current.",
+                     source_url: "https://www.ruby-lang.org/en/downloads/releases/")
+      )
+
+      described_class.call(entity_claim)
+
+      expect(a_query_prompt_saying('KEEP "current"')).to have_been_made.twice
+    end
+  end
+
   describe "widening the window after a weak verdict" do
     let(:claim) { { claim: "Ruby's current stable release is 3.1.4", type: "fact", time_sensitive: true } }
     let(:query) { '"Ruby" stable release' }

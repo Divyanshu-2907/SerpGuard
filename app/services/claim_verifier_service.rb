@@ -105,8 +105,8 @@ class ClaimVerifierService
         word, so the search cannot drift to a different subject that shares one word:
         "Ruby on Rails", "Eiffel Tower", "World Health Organization".
       - Drop filler and vague qualifiers entirely. They add no search signal and can pull
-        the results somewhere else: year, initial, approximately, roughly, about, current,
-        currently, as of, latest, publicly available, last known.
+        the results somewhere else: year, initial, approximately, roughly, about, publicly
+        available, last known.
       - Keep exact identifiers verbatim, including :: # . and _ characters.
 
     Guidelines:
@@ -123,8 +123,40 @@ class ClaimVerifierService
         bad:  Ruby on Rails initial release year 2004
         good: "Ruby on Rails" release date 2004
       claim: The world population is approximately 7.8 billion people
-        bad:  current world population approximately 7.8 billion
+        bad:  world population approximately roughly 7.8 billion people
         good: world population 7.8 billion
+  PROMPT
+
+  # "current", "currently", "latest" and "as of" are filler in one kind of claim
+  # and the entire point of the search in the other, so the rule about them is
+  # appended per claim rather than baked into the prompt above.
+  #
+  # Straight from a live run: "Ruby's current stable release is 3.1.4" had
+  # `current` stripped, searched as "Ruby" stable release, and came back
+  # `unconfirmed` off a page listing every Ruby version ever shipped. Nothing in
+  # those results said which one is current, because nothing had asked.
+  TIMELESS_QUERY_RULE = <<~PROMPT
+
+    One more rule for this claim, which is about a fixed fact:
+
+      - Drop "current", "currently", "latest" and "as of" as well. This claim is tied to a
+        moment that has already passed, so those words add no search signal and can pull
+        the results toward a newer subject than the one being checked.
+  PROMPT
+
+  FRESH_QUERY_RULE = <<~PROMPT
+
+    One more rule for this claim, which is about what is true RIGHT NOW:
+
+      - KEEP "current", "currently", "latest" and "as of" when the claim uses them, even
+        though they read like filler. For this claim they are the search signal: "Ruby"
+        stable release returns a list of every version ever shipped, while "Ruby" current
+        stable release returns the page that says which one it is.
+
+    Example for this kind of claim:
+      claim: Ruby's current stable release is 3.1.4
+        bad:  "Ruby" stable release 3.1.4
+        good: "Ruby" current stable release
   PROMPT
 
   VERDICT_SYSTEM_PROMPT = <<~PROMPT
@@ -262,10 +294,16 @@ class ClaimVerifierService
 
   # --- step 1: claim -> search query ----------------------------------------
 
+  # The query prompt plus the one rule that differs by claim. Both query calls
+  # use it, so a rewritten query is written under the same rule as the first.
+  def query_system_prompt
+    QUERY_SYSTEM_PROMPT + (time_sensitive ? FRESH_QUERY_RULE : TIMELESS_QUERY_RULE)
+  end
+
   def search_query
     @search_query ||= begin
       response = ask_claude(
-        system: QUERY_SYSTEM_PROMPT,
+        system: query_system_prompt,
         user: "<claim type=\"#{type}\">\n#{statement}\n</claim>",
         step: "search query generation"
       )
@@ -305,7 +343,7 @@ class ClaimVerifierService
     @first_round_empty = results.empty?
 
     response = ask_claude(
-      system: QUERY_SYSTEM_PROMPT,
+      system: query_system_prompt,
       user: reformulation_prompt,
       step: "search query reformulation"
     )
