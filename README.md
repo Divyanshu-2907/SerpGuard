@@ -64,7 +64,7 @@ There is a browser demo at `GET /` and a JSON service description at `GET /api/v
 ## Stack
 
 Rails 8.1 (API-only) · Ruby 3.3 · MongoDB via Mongoid · HTTParty · Rack::Attack · RSpec + WebMock ·
-277 specs, no live network calls
+281 specs, no live network calls
 
 ---
 
@@ -187,7 +187,13 @@ go wrong with that window, and each buys exactly one unfiltered search of the sa
   discussed Ruby releases at all, where the unfiltered search had answered it outright. A narrower
   window is not automatically a better one.
 
-Whichever fires, freshness is pinned off for the rest of the run, and the widening is exclusive with
+The query itself is written differently too. The query prompt tells the model to drop filler like
+"current", "latest" and "as of" — good advice for a dated fact, and exactly wrong here: searching
+`"Ruby" stable release` returns a page listing every version ever shipped, while `"Ruby" current
+stable release` returns the page that says which one it is. So that one rule is appended per claim,
+in both halves, and a rewritten query is written under the same rule as the first.
+
+Whichever widening fires, freshness is pinned off for the rest of the run, and it is exclusive with
 the query rewrite — so the three second chances cannot stack, and an uncached claim stays bounded:
 
 | | Common path | Worst case |
@@ -274,7 +280,7 @@ bin/rails db:mongoid:create_indexes
 
 ```sh
 bin/rails server                 # then open http://localhost:3000
-bundle exec rspec                # 277 examples, needs a local mongod
+bundle exec rspec                # 281 examples, needs a local mongod
 bundle exec rubocop              # rubocop-rails-omakase
 bundle exec rails zeitwerk:check # eager-load check, as production does it
 ```
