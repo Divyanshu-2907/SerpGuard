@@ -124,15 +124,94 @@ RSpec.describe Claim do
       expect(described_class.cached_verdict_for("Ruby 3.2 shipped YJIT")).to be_nil
     end
 
-    it "keeps the stored verdict regardless of age, since there is no TTL" do
+    it "keeps a verdict with no expiry regardless of age" do
       build_claim(checked_at: 5.years.ago).save!
 
       found = described_class.cached_verdict_for("Ruby 3.3 shipped YJIT")
 
-      # Documents the current decision: add a checked_at filter here if
-      # time-sensitive claims start mattering.
+      # A claim that is not time-sensitive has a nil expires_at, and that is
+      # what keeps ordinary facts cached indefinitely.
       expect(found).to be_present
       expect(found.verdict).to eq("verified")
+    end
+
+    it "serves a time-sensitive verdict that is still inside its window" do
+      build_claim(time_sensitive: true, expires_at: 6.days.from_now).save!
+
+      expect(described_class.cached_verdict_for("Ruby 3.3 shipped YJIT")).to be_present
+    end
+
+    it "treats a time-sensitive verdict past its expiry as a miss" do
+      build_claim(time_sensitive: true, expires_at: 1.minute.ago).save!
+
+      expect(described_class.cached_verdict_for("Ruby 3.3 shipped YJIT")).to be_nil
+    end
+
+    it "does not pretend the expired row is gone - only that it is unusable" do
+      build_claim(time_sensitive: true, expires_at: 1.minute.ago).save!
+
+      # Mongo's TTL reaper sweeps about once a minute, so between expiry and
+      # deletion the row is still there and still holds the unique index. The
+      # filter in this query, not the index, is what makes expiry correct.
+      expect(described_class.count).to eq(1)
+      expect(described_class.row_for("Ruby 3.3 shipped YJIT")).to be_present
+    end
+  end
+
+  describe ".expiry_for" do
+    it "expires a time-sensitive verdict after the TTL" do
+      expect(described_class.expiry_for(true))
+        .to be_within(5.seconds).of(described_class::TIME_SENSITIVE_TTL.from_now)
+    end
+
+    it "gives everything else no expiry at all" do
+      expect(described_class.expiry_for(false)).to be_nil
+    end
+  end
+
+  describe ".row_for" do
+    it "finds the row through the same normalization as a cache read" do
+      stored = build_claim
+      stored.save!
+
+      expect(described_class.row_for("  ruby 3.3 SHIPPED yjit.  ")).to eq(stored)
+    end
+
+    it "returns nil for blank input and for a claim never stored" do
+      expect(described_class.row_for("")).to be_nil
+      expect(described_class.row_for("Ruby 3.2 shipped YJIT")).to be_nil
+    end
+  end
+
+  describe ".upsert_verdict!" do
+    def upsert(**overrides)
+      described_class.upsert_verdict!(
+        {
+          claim_text: "Ruby 3.3 shipped YJIT",
+          claim_type: "fact",
+          verdict: "verified",
+          reason: "The release notes say so.",
+          source_url: "https://www.ruby-lang.org/",
+          checked_at: Time.current.utc
+        }.merge(overrides)
+      )
+    end
+
+    it "inserts when there is no row yet" do
+      expect { upsert }.to change(described_class, :count).from(0).to(1)
+    end
+
+    it "overwrites the expired row instead of colliding with the unique index" do
+      build_claim(time_sensitive: true, expires_at: 1.minute.ago, verdict: "verified").save!
+
+      # The row is expired but still present, so an insert would hit the unique
+      # index. This is the path a re-checked time-sensitive claim takes.
+      expect { upsert(verdict: "contradicted", expires_at: described_class::TIME_SENSITIVE_TTL.from_now) }
+        .not_to change(described_class, :count)
+
+      stored = described_class.row_for("Ruby 3.3 shipped YJIT")
+      expect(stored.verdict).to eq("contradicted")
+      expect(stored.expires_at).to be > Time.current
     end
   end
 
@@ -149,6 +228,7 @@ RSpec.describe Claim do
         verdict: "verified",
         reason: "The release notes say so.",
         source_url: "https://www.ruby-lang.org/",
+        time_sensitive: false,
         cached: true,
         checked_at: stored.checked_at
       )

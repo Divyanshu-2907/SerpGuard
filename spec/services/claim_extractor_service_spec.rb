@@ -33,9 +33,9 @@ RSpec.describe ClaimExtractorService do
 
       expect(claims.map(&:to_h)).to eq(
         [
-          { claim: "Ruby 3.3 shipped YJIT as its production JIT compiler", type: "fact" },
-          { claim: "ActiveSupport adds a String#squish method", type: "code_api" },
-          { claim: "Rails 8 was downloaded 400 million times", type: "statistic" }
+          { claim: "Ruby 3.3 shipped YJIT as its production JIT compiler", type: "fact", time_sensitive: false },
+          { claim: "ActiveSupport adds a String#squish method", type: "code_api", time_sensitive: false },
+          { claim: "Rails 8 was downloaded 400 million times", type: "statistic", time_sensitive: false }
         ]
       )
     end
@@ -231,6 +231,53 @@ RSpec.describe ClaimExtractorService do
         system: ClaimExtractorService::SYSTEM_PROMPT,
         user: a_string_including("Ruby 3.3")
       )
+    end
+  end
+
+  # Claims like "the current stable release is X" go stale; "Ruby 3.3 shipped
+  # in December 2023" does not. The extractor decides which is which, and the
+  # verifier uses it to pick a search window.
+  describe "time-sensitive claims" do
+    it "carries time_sensitive through when Claude marks it" do
+      stub_claude_claims([
+        { claim: "Ruby's current stable release is 3.4.1", type: "fact", time_sensitive: true },
+        { claim: "Ruby 3.3 was released in December 2023", type: "fact", time_sensitive: false }
+      ])
+
+      claims = described_class.call(text)
+
+      expect(claims.map(&:time_sensitive)).to eq([ true, false ])
+    end
+
+    it "defaults to false when the field is missing entirely" do
+      stub_claude_claims([ { claim: "Ruby 3.3 shipped YJIT", type: "fact" } ])
+
+      expect(described_class.call(text).first.time_sensitive).to be(false)
+    end
+
+    it "defaults to false for null or a non-boolean, rather than raising" do
+      stub_claude_claims([
+        { claim: "A", type: "fact", time_sensitive: nil },
+        { claim: "B", type: "fact", time_sensitive: "yes" },
+        { claim: "C", type: "fact", time_sensitive: 1 }
+      ])
+
+      # Only an explicit `true` counts. Anything else is the conservative
+      # default - a wider search and a cache entry that does not expire.
+      expect(described_class.call(text).map(&:time_sensitive)).to eq([ false, false, false ])
+    end
+
+    it "asks for the field in the prompt" do
+      stub_claude_claims([])
+      described_class.call(text)
+
+      expect(
+        a_claude_request_where { |body| body["system"].include?("time_sensitive") }
+      ).to have_been_made.once
+    end
+
+    it "builds a Claim without the keyword, for callers that predate the field" do
+      expect(ClaimExtractorService::Claim.new(claim: "x", type: "fact").time_sensitive).to be(false)
     end
   end
 end

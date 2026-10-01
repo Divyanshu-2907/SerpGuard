@@ -946,4 +946,127 @@ RSpec.describe ClaimVerifierService do
       expect(result[:source_url]).to eq("https://en.wikipedia.org/wiki/Eiffel_Tower")
     end
   end
+
+  # A time-sensitive claim is searched against Google's past-year window first,
+  # because for "the current stable release" a three-year-old page is worse
+  # than no page. The window can be too thin to judge from, so there is exactly
+  # one unfiltered fallback - and it must not stack with the reformulation.
+  describe "fresh results for time-sensitive claims" do
+    let(:claim) { { claim: "Ruby's current stable release is 3.1.4", type: "fact", time_sensitive: true } }
+    let(:stale_claim) { { claim: "Ruby 3.3 was released in December 2023", type: "fact", time_sensitive: false } }
+    let(:query) { '"Ruby" current stable release' }
+
+    def results(count)
+      Array.new(count) do |i|
+        { title: "Ruby release #{i}", link: "https://www.ruby-lang.org/#{i}",
+          snippet: "Ruby current stable release note #{i}." }
+      end
+    end
+
+    let(:verdict) do
+      verdict_json(verdict: "contradicted", reason: "Current stable is 3.4.1.",
+                   source_url: "https://www.ruby-lang.org/0")
+    end
+
+    it "sends the past-year filter for a time-sensitive claim" do
+      stub_serpapi_payload(results: results(5), fresh: true)
+      stub_claude_sequence(query, verdict)
+
+      described_class.call(claim)
+
+      expect(a_fresh_serpapi_request).to have_been_made.once
+      expect(an_unfiltered_serpapi_request).not_to have_been_made
+    end
+
+    it "sends no filter for a claim that does not expire" do
+      stub_serpapi_payload(results: results(5), fresh: false)
+      stub_claude_sequence(query, verdict)
+
+      described_class.call(stale_claim)
+
+      expect(an_unfiltered_serpapi_request).to have_been_made.once
+      expect(a_fresh_serpapi_request).not_to have_been_made
+    end
+
+    it "falls back to an unfiltered search when the past year is too thin" do
+      stub_serpapi_payload(results: results(2), fresh: true)
+      stub_serpapi_payload(results: results(5), fresh: false)
+      stub_claude_sequence(query, verdict)
+
+      described_class.call(claim)
+
+      expect(a_fresh_serpapi_request).to have_been_made.once
+      expect(an_unfiltered_serpapi_request).to have_been_made.once
+    end
+
+    it "does not fall back when the past year has enough to judge from" do
+      stub_serpapi_payload(results: results(described_class::MIN_FRESH_RESULTS), fresh: true)
+      stub_claude_sequence(query, verdict)
+
+      described_class.call(claim)
+
+      expect(an_unfiltered_serpapi_request).not_to have_been_made
+    end
+
+    it "keeps the filtered evidence if the fallback comes back empty" do
+      stub_serpapi_payload(results: results(1), fresh: true)
+      stub_serpapi_payload(results: [], fresh: false)
+      stub_claude_sequence(query, verdict)
+
+      expect(described_class.call(claim)[:verdict]).to eq("contradicted")
+      # One result still reached the verdict step rather than "no results".
+      expect(a_verdict_request).to have_been_made.once
+    end
+
+    # The worst case needs a claim with a multi-word entity in it: that is what
+    # #results_cover_claim? tests relevance by, and without one an off-topic
+    # result cannot be recognised as off-topic, so the rewrite never fires.
+    let(:entity_claim) do
+      { claim: "Ruby on Rails currently ships version 7.1.0", type: "fact", time_sensitive: true }
+    end
+
+    let(:off_topic) do
+      [ { title: "Ruby Bridges", link: "https://example.com/ruby-bridges", snippet: "Civil rights icon." } ]
+    end
+
+    def stub_thin_then_off_topic_then_reworded
+      stub_serpapi_payload(results: off_topic, fresh: true)
+      stub_serpapi_payload(results: off_topic, query: query, fresh: false)
+      stub_serpapi_payload(results: results(3), query: "reworded")
+    end
+
+    it "caps a time-sensitive claim at 3 searches and 4 Claude calls, worst case" do
+      # Thin past-year window -> unfiltered fallback -> off-topic -> one rewrite.
+      stub_thin_then_off_topic_then_reworded
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Off topic.", source_url: nil),
+        "reworded",
+        verdict_json(verdict: "contradicted", reason: "Current stable is 7.2.2.",
+                     source_url: "https://www.ruby-lang.org/0")
+      )
+
+      expect(described_class.call(entity_claim)[:verdict]).to eq("contradicted")
+
+      # The documented ceiling, asserted rather than asserted-in-a-comment.
+      expect(a_serpapi_request).to have_been_made.times(3)
+      expect(claude_requests_made).to have_been_made.times(4)
+    end
+
+    it "does not re-apply the filter on the reformulated search after a fallback" do
+      stub_thin_then_off_topic_then_reworded
+      stub_claude_sequence(
+        query,
+        verdict_json(verdict: "unconfirmed", reason: "Off topic.", source_url: nil),
+        "reworded",
+        verdict_json(verdict: "verified", reason: "Confirmed.", source_url: "https://www.ruby-lang.org/0")
+      )
+
+      described_class.call(entity_claim)
+
+      # Exactly one filtered search in the whole run: the first one.
+      expect(a_fresh_serpapi_request).to have_been_made.once
+      expect(an_unfiltered_serpapi_request).to have_been_made.twice
+    end
+  end
 end

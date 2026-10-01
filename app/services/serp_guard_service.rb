@@ -9,9 +9,11 @@
 # fresh upstream calls it would otherwise cost. Cache hits are marked `cached: true` so a caller can see
 # which verdicts were re-used rather than re-checked.
 #
-# Cost is the reason this class exists in this shape: every uncached claim is two
-# Claude calls plus one SerpApi search - three and two if its query has to be
-# reformulated - and they are charged per call.
+# Cost is the reason this class exists in this shape. An uncached claim is two
+# Claude calls plus one SerpApi search on the common path, bounded at four and
+# three in the worst case (a time-sensitive claim whose past-year search comes
+# back thin, then a query that has to be reformulated). All of it is charged
+# per call, which is what the cache is for.
 class SerpGuardService
   # Returned instead of a claim list when the text holds nothing checkable.
   NO_CLAIMS_MESSAGE = "No checkable factual claims found."
@@ -76,6 +78,7 @@ class SerpGuardService
       verdict: verdict[:verdict],
       reason: verdict[:reason],
       source_url: verdict[:source_url],
+      time_sensitive: extracted.time_sensitive,
       cached: false,
       checked_at: checked_at
     }
@@ -91,20 +94,28 @@ class SerpGuardService
     nil
   end
 
+  # Writes the verdict over the row for this claim if there is one, rather than
+  # inserting a second. That matters for a time-sensitive claim whose expiry has
+  # passed: the cache read skipped the row, but it is still there until Mongo's
+  # TTL reaper sweeps, and an insert would collide with the unique index.
   def persist(extracted, verdict)
-    Claim.create!(
+    Claim.upsert_verdict!(
       claim_text: verdict[:claim],
       claim_type: extracted.type,
       verdict: verdict[:verdict],
       reason: verdict[:reason],
       source_url: verdict[:source_url],
-      checked_at: Time.current.utc
+      checked_at: Time.current.utc,
+      # A time-sensitive verdict gets an expiry so it is re-checked rather than
+      # served stale; everything else keeps the no-TTL behaviour.
+      time_sensitive: extracted.time_sensitive,
+      expires_at: Claim.expiry_for(extracted.time_sensitive)
     )
   rescue Mongoid::Errors::Validations, Mongo::Error::OperationFailure
     # Either the uniqueness validation or the unique index fired, which means a
     # concurrent request verified the same claim first. Their row is as good as
     # ours, so use it. Anything else is a genuine failure and re-raises.
-    existing = Claim.cached_verdict_for(verdict[:claim])
+    existing = Claim.row_for(verdict[:claim])
     raise unless existing
 
     existing

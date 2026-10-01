@@ -87,6 +87,7 @@ RSpec.describe "POST /api/v1/checks", type: :request do
             "verdict" => "verified",
             "reason" => "The Ruby 3.3.0 release announcement lists YJIT as production ready.",
             "source_url" => source_url,
+            "time_sensitive" => false,
             "cached" => false,
             "checked_at" => json["claims"].first["checked_at"]
           }
@@ -228,6 +229,60 @@ RSpec.describe "POST /api/v1/checks", type: :request do
       # One verdict call for the new claim only, not two.
       expect(a_verdict_request).to have_been_made.twice
       expect(Claim.count).to eq(2)
+    end
+  end
+
+  # "The current stable release is X" stops being true without anyone editing
+  # the sentence, so these claims are searched inside Google's past-year window
+  # and their verdicts expire.
+  describe "a time-sensitive claim" do
+    let(:fresh_text) { "Ruby's current stable release is 3.4.1." }
+    let(:fresh_statement) { "Ruby's current stable release is 3.4.1" }
+
+    before do
+      stub_claude_routing(
+        claims: [ { claim: fresh_statement, type: "fact", time_sensitive: true } ],
+        query: search_query,
+        verdict: verdict
+      )
+      stub_serpapi_results(search_results)
+    end
+
+    def submit_fresh
+      post "/api/v1/checks", params: { text: fresh_text }, headers: api_key_headers, as: :json
+    end
+
+    it "reports the flag on the claim and restricts the search to the past year" do
+      submit_fresh
+
+      expect(json["claims"].first).to include("claim" => fresh_statement, "time_sensitive" => true)
+      expect(a_fresh_serpapi_request).to have_been_made.once
+    end
+
+    it "stores the verdict with an expiry" do
+      submit_fresh
+
+      stored = Claim.first
+      expect(stored.time_sensitive).to be(true)
+      expect(stored.expires_at).to be_within(1.minute).of(Claim::TIME_SENSITIVE_TTL.from_now)
+    end
+
+    it "re-verifies the claim once the stored verdict has expired" do
+      submit_fresh
+      expect(json["claims"].first["cached"]).to be(false)
+
+      Claim.first.update!(expires_at: 1.minute.ago)
+
+      submit_fresh
+
+      # Not a cache hit, and not a 500 either: the expired row is still in the
+      # unique index at this point, so the second check has to overwrite it
+      # rather than insert alongside it.
+      expect(response).to have_http_status(:ok)
+      expect(json["claims"].first["cached"]).to be(false)
+      expect(a_verdict_request).to have_been_made.twice
+      expect(Claim.count).to eq(1)
+      expect(Claim.first.expires_at).to be > Time.current
     end
   end
 

@@ -189,6 +189,7 @@
     padding:3px 8px; border-radius:100px; background:var(--surface-2); color:var(--muted);
   }
   .tag.cached { background:var(--ok-bg); color:var(--ok); font-weight:600; }
+  .tag.fresh { background:var(--accent-bg); color:var(--accent-2); font-weight:600; }
   .claim h3 { font-size:1.02rem; font-weight:600; margin:0 0 7px; line-height:1.45; overflow-wrap:break-word; }
   .claim .reason { margin:0 0 10px; font-size:.93rem; color:var(--text-mid); overflow-wrap:break-word; }
   .claim .src { font-family:var(--mono); font-size:12px; overflow-wrap:break-word; }
@@ -603,6 +604,12 @@
       esc(claim.verdict) + "</span>";
     if (claim.type) html += '<span class="tag">' + esc(claim.type) + "</span>";
     if (claim.cached) html += '<span class="tag cached">cached</span>';
+    // time_sensitive comes straight from the API: the claim was searched with
+    // Google's past-year filter and its cached verdict expires after 7 days.
+    if (claim.time_sensitive) {
+      html += '<span class="tag fresh" title="Searched with the Google past-year ' +
+        'filter (tbs=qdr:y); this verdict expires after 7 days">fresh results</span>';
+    }
     html += "</div>";
 
     html += "<h3>" + esc(claim.claim) + "</h3>";

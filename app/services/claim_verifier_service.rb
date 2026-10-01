@@ -8,12 +8,17 @@
 #   #      reason: "The 3.3.0 release notes list YJIT as production-ready.",
 #   #      source_url: "https://www.ruby-lang.org/en/news/..." }
 #
-# Step two of the pipeline, three upstream calls deep - five if the first query
-# comes back about the wrong subject:
+# Step two of the pipeline:
 #
 #   1. Claude turns the claim into a search query
-#   2. SerpApi runs that query against Google
+#   2. SerpApi runs that query against Google - restricted to the past year
+#      when the claim is time-sensitive, with one unfiltered fallback if that
+#      window is too thin to judge from
 #   3. Claude weighs the claim against the returned snippets and rules on it
+#
+# Three upstream calls on the common path. The worst case is bounded at
+# 3 SerpApi searches and 4 Claude calls per claim: see #gather_evidence for
+# the freshness fallback and #reformulation_warranted? for the one rewrite.
 #
 # The rule that shapes the whole class: a verdict we could not read is NOT
 # "unconfirmed". "Unconfirmed" is a real finding that means the evidence was
@@ -27,6 +32,12 @@ class ClaimVerifierService
   # when both are present, add to the evidence instead of pushing two organic
   # results out of it.
   DEFAULT_SNIPPET_LIMIT = 6
+
+  # A time-sensitive claim is searched against the past year first. If Google
+  # has fewer than this many usable results inside that window, the window is
+  # the problem rather than the claim, so we fall back to an unfiltered search
+  # once. Both searches together still count toward the budget below.
+  MIN_FRESH_RESULTS = 3
 
   # How many results to pull before ranking. One page is one SerpApi search
   # either way, so asking for more costs nothing and gives the authority ranking
@@ -181,6 +192,7 @@ class ClaimVerifierService
 
     @statement = attributes[:claim].to_s.strip
     @type = attributes[:type].to_s
+    @time_sensitive = attributes[:time_sensitive] == true
     @claude_client = settings[:claude_client]
     @serpapi_client = settings[:serpapi_client]
     @snippet_limit = settings.fetch(:snippet_limit, DEFAULT_SNIPPET_LIMIT)
@@ -190,7 +202,7 @@ class ClaimVerifierService
   def call
     validate_claim!
 
-    results = search_for_evidence(search_query)
+    results = gather_evidence(search_query)
     examined = results.dup
     outcome = verdict_for(results)
 
@@ -200,7 +212,9 @@ class ClaimVerifierService
     # when it does not. See #reformulation_warranted?.
     if reformulation_warranted?(outcome, results)
       second_query = reformulated_query
-      second_results = second_query ? search_for_evidence(second_query) : []
+      # Reuses whatever freshness mode produced evidence the first time, so a
+      # reformulation cannot re-trigger the fallback and stack another search.
+      second_results = second_query ? search_for_evidence(second_query, fresh: @use_fresh) : []
 
       if second_results.any?
         examined.concat(second_results)
@@ -215,7 +229,7 @@ class ClaimVerifierService
 
   private
 
-  attr_reader :statement, :type, :snippet_limit
+  attr_reader :statement, :type, :snippet_limit, :time_sensitive
 
   def claude_client
     @claude_client ||= SerpGuard::ClaudeClient.new
@@ -350,8 +364,36 @@ class ClaimVerifierService
 
   # --- step 2: query -> evidence --------------------------------------------
 
-  def search_for_evidence(query)
-    candidates = serpapi_client.search(query, limit: CANDIDATE_LIMIT)
+  # Decides the freshness mode once, for the whole claim, and remembers it.
+  #
+  # A time-sensitive claim starts inside Google's past-year window, because for
+  # "the current stable release" a three-year-old page is worse than no page.
+  # When that window is too thin to judge from, the unfiltered search runs once
+  # and `@use_fresh` is pinned to false so no later search re-tries the filter.
+  #
+  # Call budget per claim, worst case:
+  #   SerpApi  3 - filtered, unfiltered fallback, reformulated
+  #   Claude   4 - query, verdict, reformulated query, verdict
+  # Every one of those is conditional; the common path is 1 search, 2 calls.
+  def gather_evidence(query)
+    @use_fresh = time_sensitive
+
+    results = search_for_evidence(query, fresh: @use_fresh)
+    return results unless @use_fresh && results.length < MIN_FRESH_RESULTS
+
+    Rails.logger.info(
+      "[serpguard] past-year search returned #{results.length} usable result(s) for "       "#{statement.inspect}; falling back to an unfiltered search"
+    )
+    @use_fresh = false
+    fallback = search_for_evidence(query, fresh: false)
+
+    # The fallback is a superset in all but pathological cases, but if it came
+    # back empty the filtered evidence is still better than nothing.
+    fallback.any? ? fallback : results
+  end
+
+  def search_for_evidence(query, fresh: false)
+    candidates = serpapi_client.search(query, limit: CANDIDATE_LIMIT, fresh: fresh)
 
     rank_by_authority(candidates).first(snippet_limit)
   rescue SerpGuard::Errors::UpstreamError => error

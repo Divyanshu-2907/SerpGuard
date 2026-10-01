@@ -70,8 +70,12 @@ module SerpapiHelpers
       .with(query: hash_including("tbs" => SerpGuard::SerpapiClient::FRESH_WINDOW))
   end
 
+  # The query option is not decoration: a_request with a bare URL only matches a
+  # request that carries no query string at all, so without it this matcher never
+  # matches a real search and the block never runs.
   def an_unfiltered_serpapi_request
-    a_request(:get, SERPAPI_SEARCH_URL).with { |req| !req.uri.query.to_s.include?("tbs=") }
+    a_request(:get, SERPAPI_SEARCH_URL)
+      .with(query: hash_including("engine" => "google")) { |req| !req.uri.query.to_s.include?("tbs=") }
   end
 
   def stub_serpapi_results(results)

@@ -43,6 +43,9 @@ class SerpGuardResponseSerializer
       verdict: claim[:verdict],
       reason: claim[:reason],
       source_url: claim[:source_url],
+      # True when the claim only holds at a point in time. Those are searched
+      # against the past year and cached with an expiry rather than forever.
+      time_sensitive: claim[:time_sensitive] == true,
       # Tells the caller this verdict was re-used from a previous check rather
       # than searched for again just now.
       cached: claim[:cached],

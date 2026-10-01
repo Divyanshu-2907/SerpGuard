@@ -35,6 +35,7 @@ RSpec.describe SerpGuardService do
             verdict: "verified",
             reason: "Confirmed by the sources.",
             source_url: "https://example.com/1",
+            time_sensitive: false,
             cached: false,
             checked_at: result[:claims].first[:checked_at]
           }
@@ -183,7 +184,7 @@ RSpec.describe SerpGuardService do
     end
 
     it "returns the verdict even when the write fails, rather than discarding paid work" do
-      allow(Claim).to receive(:create!).and_raise(Mongo::Error.new("no primary available"))
+      allow(Claim).to receive(:upsert_verdict!).and_raise(Mongo::Error.new("no primary available"))
       allow(Rails.logger).to receive(:error)
 
       result = run
@@ -196,7 +197,7 @@ RSpec.describe SerpGuardService do
     it "uses the winner's row when a concurrent request stored the same claim first" do
       # Simulates losing the race: the row appears between our lookup and our
       # write, so create! hits the unique index.
-      allow(Claim).to receive(:create!) do |attributes|
+      allow(Claim).to receive(:upsert_verdict!) do |attributes|
         Claim.new(attributes.merge(reason: "Stored by the request that won the race.")).save!
         raise Mongo::Error::OperationFailure, "E11000 duplicate key error"
       end
@@ -209,7 +210,7 @@ RSpec.describe SerpGuardService do
     end
 
     it "re-raises a genuine validation failure that is not a duplicate" do
-      allow(Claim).to receive(:create!).and_raise(
+      allow(Claim).to receive(:upsert_verdict!).and_raise(
         Mongoid::Errors::Validations.new(Claim.new(claim_text: "x", verdict: "nonsense"))
       )
 
