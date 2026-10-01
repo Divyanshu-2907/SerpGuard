@@ -498,9 +498,9 @@
   };
 
   // A real response from https://serpguard.onrender.com/api/v1/checks for the
-  // mixed-facts preset, captured 2026-09-30. Nothing here is illustrative.
+  // mixed-facts preset, captured 2026-10-01. Nothing here is illustrative.
   var SAMPLE = {
-    checked_at: "2026-09-30T09:18:20Z",
+    checked_at: "2026-10-01T06:33:38Z",
     input_summary: {
       characters: 101,
       claims_extracted: 3,
@@ -513,16 +513,18 @@
         type: "fact",
         verdict: "verified",
         reason: "Multiple sources, including DHH's own site, state he created Ruby on Rails.",
-        source_url: "https://world.hey.com/dhh",
+        source_url: "https://world.hey.com/dhh?page=eyJwYWdlX251bWJlciI6MTgsInZhbHVlcyI6eyJjcmVhdGVkX2F0IjoiMjAyNC0wOS0wMVQxODoxMjoxNC44MjU2OTdaIiwiaWQiOjM5MzUyfX0%3D",
+        time_sensitive: false,
         cached: true,
         checked_at: "2026-09-30T08:02:45Z"
       },
       {
         claim: "Ruby on Rails was created in 2004",
-        type: "statistic",
+        type: "fact",
         verdict: "verified",
         reason: "Multiple sources state Rails was extracted/launched by DHH in 2004.",
         source_url: "https://blog.codeminer42.com/a-journey-through-the-greatest-ruby-on-rails-milestones/",
+        time_sensitive: false,
         cached: true,
         checked_at: "2026-09-28T06:10:53Z"
       },
@@ -532,6 +534,7 @@
         verdict: "contradicted",
         reason: "Sources state the Eiffel Tower is in Paris, on the Champ-de-Mars, not London.",
         source_url: "https://wikitravel.org/en/Eiffel_Tower",
+        time_sensitive: false,
         cached: true,
         checked_at: "2026-09-25T08:35:40Z"
       }

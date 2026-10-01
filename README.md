@@ -409,7 +409,7 @@ Claims** button, and three preset chips that each exercise a different path:
 | Chip | Input | Exercises |
 | ---- | ----- | --------- |
 | `mixed-facts` | Two true claims about Rails and one plainly false one about the Eiffel Tower | Opposite verdicts from one input |
-| `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_by` | `code_api` claims; the invented one comes back `contradicted`, not merely unsourced |
+| `code-hallucination` | A snippet using real `String#squish` and invented `Enumerable#sum_by` | `code_api` claims, and the escalation path: a name that appears in **no** result becomes `contradicted` rather than merely unsourced. Whether it fires depends on what Google returns that minute - `sum_by` exists in other languages, and a run whose results mention it is honestly `unconfirmed` |
 | `outdated-stat` | A Ruby version that was current in 2023 | A claim that live results now contradict |
 
 Results render one card per claim with a verdict badge (green / yellow / red), the reason and a
