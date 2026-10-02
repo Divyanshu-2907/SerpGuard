@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 268 72" width="268" height="72"
+     role="img" aria-label="SerpGuard">
+  <title>SerpGuard</title>
+  <!--
+    The same logo for dark backgrounds: "Serp" in white, and the teal is the
+    page's accent token in its dark theme (#4CBECB), which is lifted for contrast
+    against a dark ground the way the page does it.
+  -->
+  <g transform="translate(8 8) scale(0.875)">
+    <path fill="#4CBECB" fill-rule="evenodd" d="
+      M32 4 L57 13 V33 C57 46.5 46.6 56.4 32 60 C17.4 56.4 7 46.5 7 33 V13 Z
+      M32 12.6 L49 18.7 V33 C49 42.6 42 50 32 53.1 C22 50 15 42.6 15 33 V18.7 Z
+    "/>
+    <path fill="none" stroke="#4CBECB" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"
+          d="M23 33.2 L29.4 39.6 L42 27"/>
+  </g>
+
+  <text x="76" y="48" font-size="38" font-weight="700" letter-spacing="-0.8"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">
+    <tspan fill="#FFFFFF">Serp</tspan><tspan fill="#4CBECB">Guard</tspan>
+  </text>
+</svg>

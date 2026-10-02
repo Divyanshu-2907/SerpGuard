@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="SerpGuard">
+  <title>SerpGuard</title>
+  <!--
+    Shield and check only: the favicon, and the mark beside the wordmark.
+
+    Drawn as a ring (outer shield minus inner shield, evenodd) so the middle
+    stays transparent and the mark sits on any background. The band is 8 of 64
+    units wide, which is still ~2px at a 16px favicon, where a hairline outline
+    would disappear.
+
+    The fill follows the system theme because a favicon cannot see the page's
+    own toggle. The teal values are the page's accent token in each theme.
+  -->
+  <style>
+    .mark { fill: #0B6B75; stroke: #0B6B75; }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #4CBECB; stroke: #4CBECB; }
+    }
+  </style>
+
+  <path class="mark" stroke="none" fill-rule="evenodd" d="
+    M32 4 L57 13 V33 C57 46.5 46.6 56.4 32 60 C17.4 56.4 7 46.5 7 33 V13 Z
+    M32 12.6 L49 18.7 V33 C49 42.6 42 50 32 53.1 C22 50 15 42.6 15 33 V18.7 Z
+  "/>
+
+  <path class="mark" fill="none" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"
+        d="M23 33.2 L29.4 39.6 L42 27"/>
+</svg>

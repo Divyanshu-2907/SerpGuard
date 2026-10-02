@@ -1,6 +1,14 @@
-# SerpGuard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/logo-dark.svg">
+    <img src="public/logo.svg" alt="SerpGuard" width="268" height="72">
+  </picture>
+</p>
 
-[![CI](https://github.com/Divyanshu-2907/SerpGuard/actions/workflows/ci.yml/badge.svg)](https://github.com/Divyanshu-2907/SerpGuard/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/Divyanshu-2907/SerpGuard/actions/workflows/ci.yml"><img
+    src="https://github.com/Divyanshu-2907/SerpGuard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
 
 **Fact-checks AI-generated text and code against live search results.**
 
@@ -12,6 +20,42 @@ Built for the SerpApi India Hackathon 2026 — AI Agents track.
 
 **Live:** <https://serpguard.onrender.com> · **In your repo:**
 [a GitHub Action for pull requests](#use-it-in-your-repo)
+
+**Demo video:** _coming soon_
+
+![The demo page after checking three claims: summary tiles, then one card per claim with its verdict, reason and source](docs/screenshot.png)
+
+## Highlights
+
+- **Verdicts are read off live search snippets, never a model's memory** — and Google's own answer
+  box or knowledge graph panel counts as evidence, with `source_type` saying which one was cited
+  ([why](#why-googles-own-answers-count-as-evidence)).
+- **An invented method is called out, not shrugged at** — a `code_api` name absent from every result
+  for its own name comes back `contradicted`, and never on zero results
+  ([the rule](#3-absence-of-evidence--for-code-apis-and-nowhere-else)).
+- **Measured, not asserted: 25 labelled claims, 18 correct, 7 abstentions, 0 wrong answers** — the
+  benchmark also found two bugs in the absence test, both since fixed
+  ([the numbers and the misses](#how-accurate-is-it)).
+- **It runs on pull requests**, checking changed Markdown and leaving one comment
+  ([setup](#use-it-in-your-repo), [example comment](docs/action-comment.png)).
+- **287 specs with no network access**, plus Brakeman, bundler-audit, RuboCop and actionlint in CI
+  ([stack](#stack)).
+
+## Contents
+
+| | |
+| - | - |
+| [Try it right now](#try-it-right-now) | curl it, or open the demo page |
+| [Use it in your repo](#use-it-in-your-repo) | the GitHub Action |
+| [What it does, and why](#what-it-does-and-why) | the idea in a paragraph |
+| [Stack](#stack) | what it is built on |
+| [How accurate is it?](#how-accurate-is-it) | the benchmark, including the misses |
+| [Architecture](#architecture) | the three services and the decisions behind them |
+| [Setup](#setup) | running it locally |
+| [API](#api) | endpoints, response shape, errors |
+| [Browser demo](#browser-demo) | the page at `GET /` |
+| [Engineering notes](#engineering-notes) | the four choices worth arguing about |
+| [Deployment](#deployment) | Render blueprint and production notes |
 
 ---
 
@@ -122,10 +166,14 @@ graph panel — that answer is weighed ahead of the ordinary results, and a clai
 back in the same words costs nothing the second time.
 
 ```
-POST /api/v1/checks   { "text": "Rails 8 was released in March 2023." }
-  →  contradicted · "The Rails blog dates the 8.0 release to November 2024."
-     source: https://rubyonrails.org/2024/11/7/rails-8-no-paas-required
+POST /api/v1/checks   { "text": "The Eiffel Tower is located in London." }
+  →  contradicted · "Sources state the Eiffel Tower is on the Champ de Mars in
+                       Paris, France, not London."
+     source: https://en.wikipedia.org/wiki/Eiffel_Tower   (source_type: knowledge_graph)
 ```
+
+That is a real response, copied from the live service on 2 October 2026 - the Rails 8 example that
+used to sit here was written by hand.
 
 There is a browser demo at `GET /` and a JSON service description at `GET /api/v1`.
 

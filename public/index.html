@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SerpGuard — verify AI claims against the live web</title>
 <meta name="description" content="A Rails 8 API that extracts factual and technical claims from AI-generated text or code and checks each one against live Google results via SerpApi.">
+<link rel="icon" href="/logo-mark.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- One webfont: IBM Plex Mono for code and labels. Body text uses the system
@@ -50,6 +51,7 @@
     flex-wrap:wrap; padding:22px 0; border-bottom:1px solid var(--line);
   }
   .brand { display:flex; align-items:center; gap:10px; }
+  .brandmark { width:26px; height:26px; flex:none; color:var(--accent); display:block; }
   .wordmark { font-size:1.12rem; font-weight:700; letter-spacing:-.02em; }
   .wordmark span { color:var(--accent); }
   .livebadge {
@@ -316,6 +318,10 @@
 
   <header>
     <div class="brand">
+      <svg class="brandmark" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <path fill="currentColor" fill-rule="evenodd" d="M32 4 L57 13 V33 C57 46.5 46.6 56.4 32 60 C17.4 56.4 7 46.5 7 33 V13 Z M32 12.6 L49 18.7 V33 C49 42.6 42 50 32 53.1 C22 50 15 42.6 15 33 V18.7 Z"/>
+        <path fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" d="M23 33.2 L29.4 39.6 L42 27"/>
+      </svg>
       <span class="wordmark">Serp<span>Guard</span></span>
       <a class="livebadge" href="/api/v1/health"
          title="Reflects GET /api/v1/health only — process liveness, not upstream status">
