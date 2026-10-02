@@ -2,6 +2,14 @@
 require "rubygems"
 require "bundler/setup"
 
-ARGV.unshift("--ensure-latest")
+# Rails generates this binstub with `ARGV.unshift("--ensure-latest")`, which
+# asks rubygems.org for the newest release and exits 5 when the locked version
+# is older - whatever the scan itself found. The day Brakeman 8.1.0 shipped,
+# that turned CI red against a report with zero warnings, and it would do so
+# again on every future release: a red badge that says nothing about this code.
+#
+# Keeping the gem current is Dependabot's job (.github/dependabot.yml runs
+# bundler weekly). This step's job is to fail on findings in our code, and it
+# still does - Brakeman exits non-zero on warnings by default.
 
 load Gem.bin_path("brakeman", "brakeman")
