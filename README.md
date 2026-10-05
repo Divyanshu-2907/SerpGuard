@@ -21,7 +21,7 @@ Built for the SerpApi India Hackathon 2026 — AI Agents track.
 **Live:** <https://serpguard.onrender.com> · **In your repo:**
 [a GitHub Action for pull requests](#use-it-in-your-repo)
 
-**Demo video:** _coming soon_
+**Demo video:** <https://www.youtube.com/watch?v=ifbZLzNjMu0>
 
 ![The demo page after checking three claims: summary tiles, then one card per claim with its verdict, reason and source](docs/screenshot.png)
 
