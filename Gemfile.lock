@@ -114,7 +114,7 @@ GEM
     globalid (1.4.0)
       activesupport (>= 6.1)
     hashdiff (1.2.1)
-    httparty (0.24.2)
+    httparty (0.24.3)
       csv
       mini_mime (>= 1.0.0)
       multi_xml (>= 0.5.2)
@@ -341,7 +341,7 @@ DEPENDENCIES
   bundler-audit
   debug
   dotenv-rails
-  httparty (~> 0.22)
+  httparty (~> 0.24)
   json (~> 2.9)
   kamal
   mongoid
