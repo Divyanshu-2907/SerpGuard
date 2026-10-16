@@ -61,5 +61,5 @@ end
 
 group :test do
   # Stubs SerpApi/Anthropic HTTP so specs never hit the network.
-  gem "webmock", "~> 3.0"
+  gem "webmock", "~> 3.30"
 end
