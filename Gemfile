@@ -14,7 +14,7 @@ gem "json", "~> 2.9"
 
 # --- SerpGuard ---------------------------------------------------------------
 # HTTP client for the SerpApi + Anthropic calls.
-gem "httparty", "~> 0.22"
+gem "httparty", "~> 0.24"
 
 # MongoDB ODM. Replaces Active Record (app generated with --skip-active-record).
 gem "mongoid"
