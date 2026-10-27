@@ -16,7 +16,8 @@ For developers about to commit AI-written code or docs: it catches the version n
 or figure a model stated confidently and got wrong, before it reaches a codebase or a reader who
 will believe it.
 
-Built for the SerpApi India Hackathon 2026 — AI Agents track.
+Built for the SerpApi India Hackathon 2026 — AI Agents track, and listed in SerpApi's
+[#BuiltWithSerpApi showcase](https://serpapi.github.io/BuiltWithSerpApi/projects/serpguard/).
 
 **Live:** <https://serpguard.onrender.com> · **In your repo:**
 [a GitHub Action for pull requests](#use-it-in-your-repo)
