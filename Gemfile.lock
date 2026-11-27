@@ -97,7 +97,7 @@ GEM
       bigdecimal
       rexml
     crass (1.0.8)
-    csv (3.3.6)
+    csv (3.3.7)
     date (3.5.1)
     debug (1.11.1)
       irb (~> 1.10)
@@ -114,7 +114,7 @@ GEM
     globalid (1.4.0)
       activesupport (>= 6.1)
     hashdiff (1.2.1)
-    httparty (0.24.3)
+    httparty (0.25.1)
       csv
       mini_mime (>= 1.0.0)
       multi_xml (>= 0.5.2)
@@ -342,7 +342,7 @@ DEPENDENCIES
   bundler-audit
   debug
   dotenv-rails
-  httparty (~> 0.24)
+  httparty (~> 0.25)
   json (~> 2.9)
   kamal
   mongoid
